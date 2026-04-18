@@ -113,6 +113,18 @@ export interface GlobalConfig {
      */
     maxConversations?: number;
   };
+
+  /**
+   * Jira integration: maps Jira project keys to registered codebase names so
+   * webhook-driven conversations can locate their working directory.
+   *
+   * Defined at the global level because the JiraAdapter is a server-wide
+   * singleton initialized at startup; per-repo overrides are also supported
+   * via the same key on RepoConfig (see below).
+   */
+  jira?: {
+    projects?: Record<string, string>;
+  };
 }
 
 /**
@@ -187,6 +199,15 @@ export interface RepoConfig {
      * @default 'docs/'
      */
     path?: string;
+  };
+
+  /**
+   * Jira integration: maps Jira project keys to registered codebase names.
+   * When set on a repo config, entries are merged on top of any global
+   * `jira.projects` map (repo entries win for the same key).
+   */
+  jira?: {
+    projects?: Record<string, string>;
   };
 
   /**
@@ -275,6 +296,13 @@ export interface MergedConfig {
    * Undefined when no env vars are configured.
    */
   envVars?: Record<string, string>;
+  /**
+   * Jira integration: project-key → codebase-name map merged from global and
+   * repo configs. Undefined when no mapping is configured.
+   */
+  jira?: {
+    projects?: Record<string, string>;
+  };
 }
 
 /**

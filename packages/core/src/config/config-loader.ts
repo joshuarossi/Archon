@@ -404,6 +404,11 @@ function mergeGlobalConfig(defaults: MergedConfig, global: GlobalConfig): Merged
     result.concurrency.maxConversations = global.concurrency.maxConversations;
   }
 
+  // Jira project → codebase mapping (global level)
+  if (global.jira?.projects && Object.keys(global.jira.projects).length > 0) {
+    result.jira = { projects: { ...global.jira.projects } };
+  }
+
   return result;
 }
 
@@ -468,6 +473,13 @@ function mergeRepoConfig(merged: MergedConfig, repo: RepoConfig): MergedConfig {
   // Propagate per-project env vars from repo config
   if (repo.env) {
     result.envVars = { ...result.envVars, ...repo.env };
+  }
+
+  // Jira project → codebase mapping (repo overrides global per key)
+  if (repo.jira?.projects && Object.keys(repo.jira.projects).length > 0) {
+    result.jira = {
+      projects: { ...(result.jira?.projects ?? {}), ...repo.jira.projects },
+    };
   }
 
   return result;
