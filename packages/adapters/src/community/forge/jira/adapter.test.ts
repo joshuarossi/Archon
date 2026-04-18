@@ -67,16 +67,6 @@ mock.module('@archon/core', () => ({
   classifyAndFormatError: mock((err: Error) => err.message),
   toError: mock((e: unknown) => (e instanceof Error ? e : new Error(String(e)))),
   ConversationNotFoundError: class extends Error {},
-  ConversationLockManager: class {
-    async acquireLock(_id: string, fn: () => Promise<void>): Promise<void> {
-      await fn();
-    }
-  },
-}));
-
-// Mock @archon/isolation (only the type import)
-mock.module('@archon/isolation', () => ({
-  IsolationHints: {},
 }));
 
 // Mock global fetch to prevent real HTTP calls
@@ -86,7 +76,6 @@ globalThis.fetch = mockFetch as typeof globalThis.fetch;
 // Now import the adapter (after all mocks)
 const { JiraAdapter } = await import('./adapter');
 const { extractPlainText } = await import('./types');
-const { ConversationLockManager } = await import('@archon/core');
 
 const SECRET = 'test-secret';
 
@@ -106,13 +95,11 @@ interface AdapterOpts {
 }
 
 function createAdapter(opts: AdapterOpts = {}): InstanceType<typeof JiraAdapter> {
-  const lockManager = new ConversationLockManager();
   return new JiraAdapter(
     opts.baseUrl ?? 'https://example.atlassian.net',
     opts.email ?? 'bot@example.com',
     opts.apiToken ?? 'api-token',
     opts.secret ?? SECRET,
-    lockManager as never,
     {
       botMention: opts.botMention ?? 'archon',
       botAccountId: opts.botAccountId,
@@ -120,6 +107,39 @@ function createAdapter(opts: AdapterOpts = {}): InstanceType<typeof JiraAdapter>
       projectCodebaseMap: opts.projectCodebaseMap,
     }
   );
+}
+
+/**
+ * Extract the JSON arg from a synthesized router command.
+ *
+ * Mirrors what `handleWorkflowRunCommand` does: tokenize the command string
+ * with the same regex as `parseCommand`, strip command/workflow-name, and
+ * rejoin the remaining tokens with single spaces. This is the exact string
+ * the workflow receives as `$1` / `$ARGUMENTS`.
+ */
+function extractRouterPayload(command: string): Record<string, unknown> {
+  const tokens = command.match(/"[^"]+"|'[^']+'|\S+/g) ?? [];
+  // tokens[0] = "/workflow", tokens[1] = "run", tokens[2] = "jira-router"
+  if (tokens[0] !== '/workflow' || tokens[1] !== 'run' || tokens[2] !== 'jira-router') {
+    throw new Error(`Command does not match router shape: ${command}`);
+  }
+  const rejoined = tokens.slice(3).join(' ');
+  return JSON.parse(rejoined) as Record<string, unknown>;
+}
+
+/** Destructure the captured mockHandleMessage call arguments. */
+function handleMessageCall(index = 0): {
+  conversationId: string;
+  command: string;
+  metadata: { issueContext?: string };
+} {
+  const args = mockHandleMessage.mock.calls[index] as unknown as [
+    unknown,
+    string,
+    string,
+    { issueContext?: string },
+  ];
+  return { conversationId: args[1], command: args[2], metadata: args[3] };
 }
 
 interface CommentPayloadOpts {
@@ -254,19 +274,10 @@ describe('JiraAdapter', () => {
     });
 
     test('constructor rejects empty required fields', () => {
-      const lockManager = new ConversationLockManager();
-      expect(() => new JiraAdapter('', 'a@b.c', 'tok', 'secret', lockManager as never)).toThrow(
-        /baseUrl/
-      );
-      expect(() => new JiraAdapter('https://x', '', 'tok', 'secret', lockManager as never)).toThrow(
-        /userEmail/
-      );
-      expect(
-        () => new JiraAdapter('https://x', 'a@b.c', '', 'secret', lockManager as never)
-      ).toThrow(/apiToken/);
-      expect(() => new JiraAdapter('https://x', 'a@b.c', 'tok', '', lockManager as never)).toThrow(
-        /webhookSecret/
-      );
+      expect(() => new JiraAdapter('', 'a@b.c', 'tok', 'secret')).toThrow(/baseUrl/);
+      expect(() => new JiraAdapter('https://x', '', 'tok', 'secret')).toThrow(/userEmail/);
+      expect(() => new JiraAdapter('https://x', 'a@b.c', '', 'secret')).toThrow(/apiToken/);
+      expect(() => new JiraAdapter('https://x', 'a@b.c', 'tok', '')).toThrow(/webhookSecret/);
     });
   });
 
@@ -366,13 +377,7 @@ describe('JiraAdapter', () => {
       const payload = commentPayload({ issueKey: 'PROJ-1' });
       await adapter.handleWebhook(payload, sign(payload));
       expect(mockHandleMessage).toHaveBeenCalledTimes(1);
-      // First arg of handleMessage call: this; second arg: conversationId
-      const callArgs = mockHandleMessage.mock.calls[0] as unknown as [
-        unknown,
-        string,
-        ...unknown[],
-      ];
-      expect(callArgs[1]).toBe('PROJ-1');
+      expect(handleMessageCall().conversationId).toBe('PROJ-1');
     });
 
     test('FOO_BAR-123 accepted', async () => {
@@ -382,6 +387,7 @@ describe('JiraAdapter', () => {
       const payload = commentPayload({ issueKey: 'FOO_BAR-123', projectKey: 'FOO_BAR' });
       await adapter.handleWebhook(payload, sign(payload));
       expect(mockHandleMessage).toHaveBeenCalledTimes(1);
+      expect(handleMessageCall().conversationId).toBe('FOO_BAR-123');
     });
 
     test('sendMessage rejects invalid conversation ids', async () => {
@@ -395,7 +401,126 @@ describe('JiraAdapter', () => {
     });
   });
 
-  describe('event parsing', () => {
+  describe('router command synthesis', () => {
+    test('handleMessage receives the /workflow run jira-router shape exactly once', async () => {
+      const adapter = createAdapter({
+        projectCodebaseMap: { PROJ: 'my-codebase' },
+      });
+      const payload = commentPayload();
+      await adapter.handleWebhook(payload, sign(payload));
+
+      expect(mockHandleMessage).toHaveBeenCalledTimes(1);
+      const { command } = handleMessageCall();
+      expect(command).toMatch(/^\/workflow run jira-router \{.*\}$/);
+    });
+
+    test('metadata.issueContext is passed through', async () => {
+      const adapter = createAdapter({
+        projectCodebaseMap: { PROJ: 'my-codebase' },
+      });
+      const payload = commentPayload();
+      await adapter.handleWebhook(payload, sign(payload));
+
+      const { metadata } = handleMessageCall();
+      expect(metadata.issueContext).toContain('Key: PROJ-1');
+      expect(metadata.issueContext).toContain('Summary: Issue summary');
+    });
+
+    test('comment_created payload carries body and author', async () => {
+      const adapter = createAdapter({
+        projectCodebaseMap: { PROJ: 'my-codebase' },
+      });
+      const payload = commentPayload({ body: 'please implement this', authorAccountId: 'human-1' });
+      await adapter.handleWebhook(payload, sign(payload));
+
+      const router = extractRouterPayload(handleMessageCall().command);
+      expect(router.event).toBe('comment_created');
+      expect(router.issue_key).toBe('PROJ-1');
+      expect(router.project).toBe('PROJ');
+      expect(router.issue_type).toBe('Task');
+      expect(router.summary).toBe('Issue summary');
+      expect(router.status).toBe('To Do');
+      expect(router.comment_body).toBe('please implement this');
+      expect(router.author_account_id).toBe('human-1');
+    });
+
+    test('created payload has no event-specific extras', async () => {
+      const adapter = createAdapter({
+        projectCodebaseMap: { PROJ: 'my-codebase' },
+      });
+      const payload = createdPayload();
+      await adapter.handleWebhook(payload, sign(payload));
+
+      const router = extractRouterPayload(handleMessageCall().command);
+      expect(router.event).toBe('created');
+      expect(router.issue_key).toBe('PROJ-2');
+      expect(router.summary).toBe('A new bug');
+      expect(router.issue_type).toBe('Bug');
+      expect(router.comment_body).toBeUndefined();
+      expect(router.from_status).toBeUndefined();
+    });
+
+    test('transition payload carries from_status, to_status, actor', async () => {
+      const adapter = createAdapter({
+        projectCodebaseMap: { PROJ: 'my-codebase' },
+      });
+      const payload = statusChangedPayload();
+      await adapter.handleWebhook(payload, sign(payload));
+
+      const router = extractRouterPayload(handleMessageCall().command);
+      expect(router.event).toBe('transition');
+      expect(router.from_status).toBe('To Do');
+      expect(router.to_status).toBe('In Progress');
+      expect(router.actor).toBe('User One');
+    });
+
+    test('content_changed payload carries field and new_value', async () => {
+      const adapter = createAdapter({
+        projectCodebaseMap: { PROJ: 'my-codebase' },
+      });
+      const payload = contentChangedPayload();
+      await adapter.handleWebhook(payload, sign(payload));
+
+      const router = extractRouterPayload(handleMessageCall().command);
+      expect(router.event).toBe('content_changed');
+      expect(router.field).toBe('summary');
+      expect(router.new_value).toBe('Updated summary');
+      expect(router.actor).toBe('User One');
+    });
+
+    test('raw-JSON carrier survives apostrophes, quotes, and embedded whitespace', async () => {
+      // Regression guard: verify the tokenizer + rejoin round-trip preserves
+      // apostrophes (which would break single-quoted wrapping), double-quotes
+      // (which delimit JSON itself), and single-space content inside values.
+      const issueKey = 'PROJ-99';
+      const trickySummary = `Joe's "auth" bug — with backticks \` and embedded newline \\n here`;
+      const tricky = JSON.stringify({
+        webhookEvent: 'jira:issue_created',
+        user: { accountId: 'user-1', displayName: 'User One' },
+        issue: {
+          id: '99',
+          key: issueKey,
+          fields: {
+            summary: trickySummary,
+            description: 'x',
+            status: { name: 'To Do' },
+            issuetype: { name: 'Bug' },
+            reporter: { accountId: 'user-1' },
+            project: { id: '1', key: 'PROJ', name: 'PROJ' },
+          },
+        },
+      });
+      const adapter = createAdapter({
+        projectCodebaseMap: { PROJ: 'my-codebase' },
+      });
+      await adapter.handleWebhook(tricky, sign(tricky));
+
+      const router = extractRouterPayload(handleMessageCall().command);
+      expect(router.summary).toBe(trickySummary);
+    });
+  });
+
+  describe('event parsing → dispatch', () => {
     test('comment_created → dispatched', async () => {
       const adapter = createAdapter({
         projectCodebaseMap: { PROJ: 'my-codebase' },
@@ -405,20 +530,13 @@ describe('JiraAdapter', () => {
       expect(mockHandleMessage).toHaveBeenCalledTimes(1);
     });
 
-    test('jira:issue_created → dispatched with summary+desc prompt', async () => {
+    test('jira:issue_created → dispatched', async () => {
       const adapter = createAdapter({
         projectCodebaseMap: { PROJ: 'my-codebase' },
       });
       const payload = createdPayload();
       await adapter.handleWebhook(payload, sign(payload));
       expect(mockHandleMessage).toHaveBeenCalledTimes(1);
-      const callArgs = mockHandleMessage.mock.calls[0] as unknown as [
-        unknown,
-        string,
-        string,
-        ...unknown[],
-      ];
-      expect(callArgs[2]).toContain('A new bug');
     });
 
     test('jira:issue_updated with status changelog → dispatched', async () => {
@@ -428,14 +546,6 @@ describe('JiraAdapter', () => {
       const payload = statusChangedPayload();
       await adapter.handleWebhook(payload, sign(payload));
       expect(mockHandleMessage).toHaveBeenCalledTimes(1);
-      const callArgs = mockHandleMessage.mock.calls[0] as unknown as [
-        unknown,
-        string,
-        string,
-        ...unknown[],
-      ];
-      expect(callArgs[2]).toContain('To Do');
-      expect(callArgs[2]).toContain('In Progress');
     });
 
     test('jira:issue_updated with summary changelog → dispatched', async () => {
@@ -625,7 +735,7 @@ describe('JiraAdapter', () => {
       mockFetch.mockClear();
       await adapter.sendMessage('PROJ-1', 'hi');
 
-      // 1 call for the POST comment (history fetch only happens in handleWebhook)
+      // 1 call for the POST comment (no history fetch in the refactored adapter)
       expect(mockFetch).toHaveBeenCalledTimes(1);
       const [url, init] = mockFetch.mock.calls[0] as unknown as [string, RequestInit];
       expect(url).toContain('/rest/api/3/issue/PROJ-1/comment');

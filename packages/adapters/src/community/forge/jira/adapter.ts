@@ -3,12 +3,31 @@
  *
  * Community forge adapter — see packages/adapters/src/community/forge/README.md
  *
- * Triggers on four Jira webhook event types when the issue's project key is
- * mapped to a registered Archon codebase:
- *   - jira:issue_created
- *   - jira:issue_updated (status transitions)
- *   - jira:issue_updated (summary/description changes)
- *   - comment_created
+ * Translates four Jira webhook event types into a single deterministic slash
+ * command, `/workflow run jira-router <json>`, and hands it off to the
+ * existing orchestrator dispatch path. All routing logic lives in the
+ * user-authored `jira-router.yaml` workflow — this adapter has no knowledge
+ * of which downstream workflow should run for which event.
+ *
+ * Handled events (when the issue's project key is mapped to a registered
+ * Archon codebase):
+ *   - jira:issue_created                      → event: "created"
+ *   - jira:issue_updated (status changelog)   → event: "transition"
+ *   - jira:issue_updated (summary/description)→ event: "content_changed"
+ *   - comment_created                         → event: "comment_created"
+ *
+ * The JSON payload is appended verbatim (no quoting, no encoding). This
+ * works because the orchestrator's tokenizer
+ * (`parseCommand` in `packages/core/src/handlers/command-handler.ts`) splits
+ * on whitespace via `\S+`, and `handleWorkflowRunCommand` reassembles
+ * `args.slice(2).join(' ')` before handing the string to the workflow.
+ * Apostrophes and double-quotes inside JSON values are safe — the greedy
+ * `\S+` alternative wins at the leading `{`, so the tokenizer never
+ * attempts to match quote-delimited substrings mid-JSON. The one
+ * cosmetic cost: multiple consecutive spaces inside string values
+ * collapse to a single space on the round-trip. This never affects
+ * routing keys (event, to_status, etc., all whitespace-free) and is
+ * acceptable for summary/body content.
  *
  * Self-triggering is prevented for comment events via the BOT_RESPONSE_MARKER
  * appended to outbound comments, plus an optional bot accountId match.
@@ -19,16 +38,18 @@
  * Codebase resolution is explicit: Jira project keys map to registered
  * Archon codebase names via `jira.projects` in `~/.archon/config.yaml`
  * (or `.archon/config.yaml`). Unmapped projects log a warning and abort.
+ *
+ * Concurrency: fire-and-forget. Multiple events for the same ticket may
+ * produce concurrent workflow runs. The router workflow is responsible for
+ * reconciliation (inspect artifacts on entry, guard transitions on exit).
  */
 import { createHmac, timingSafeEqual } from 'crypto';
 import type { IPlatformAdapter, MessageMetadata } from '@archon/core';
-import type { IsolationHints } from '@archon/isolation';
 import {
   ConversationNotFoundError,
   handleMessage,
   classifyAndFormatError,
   toError,
-  ConversationLockManager,
 } from '@archon/core';
 import { createLogger } from '@archon/paths';
 import * as db from '@archon/core/db/conversations';
@@ -58,6 +79,15 @@ const BOT_RESPONSE_MARKER = '<!-- archon-bot-response -->';
 /** Project key format: uppercase alphanumeric + underscore, hyphen, then digits */
 const ISSUE_KEY_PATTERN = /^[A-Z][A-Z0-9_]+-\d+$/;
 
+/**
+ * Router workflow that every Jira webhook dispatches to. Must exist as
+ * `jira-router.yaml` in the user's workflow directories (repo or
+ * `~/.archon/.archon/workflows/`). Not shipped as a bundled default —
+ * deliberately user-authored content, since the routing logic is a
+ * per-organization SDLC contract, not adapter code.
+ */
+const ROUTER_WORKFLOW_NAME = 'jira-router';
+
 export interface JiraAdapterOptions {
   botMention?: string;
   botAccountId?: string;
@@ -67,7 +97,7 @@ export interface JiraAdapterOptions {
 }
 
 interface ParsedCommentEvent {
-  kind: 'comment';
+  kind: 'comment_created';
   issue: JiraIssue;
   body: string;
   authorAccountId?: string;
@@ -78,8 +108,8 @@ interface ParsedCreatedEvent {
   issue: JiraIssue;
 }
 
-interface ParsedStatusChangedEvent {
-  kind: 'status_changed';
+interface ParsedTransitionEvent {
+  kind: 'transition';
   issue: JiraIssue;
   fromStatus: string;
   toStatus: string;
@@ -96,8 +126,25 @@ interface ParsedContentChangedEvent {
 type ParsedEvent =
   | ParsedCommentEvent
   | ParsedCreatedEvent
-  | ParsedStatusChangedEvent
+  | ParsedTransitionEvent
   | ParsedContentChangedEvent;
+
+/** Structured JSON payload handed to the router workflow as its sole argument. */
+interface RouterEventPayload {
+  event: 'comment_created' | 'created' | 'transition' | 'content_changed';
+  issue_key: string;
+  project: string;
+  issue_type?: string;
+  summary: string;
+  status?: string;
+  from_status?: string;
+  to_status?: string;
+  field?: string;
+  new_value?: string;
+  comment_body?: string;
+  author_account_id?: string;
+  actor?: string;
+}
 
 export class JiraAdapter implements IPlatformAdapter {
   private readonly baseUrl: string;
@@ -105,7 +152,6 @@ export class JiraAdapter implements IPlatformAdapter {
   private readonly apiToken: string;
   private readonly webhookSecret: string;
   private readonly authHeader: string;
-  private readonly lockManager: ConversationLockManager;
   private readonly botMention: string;
   private readonly botAccountId: string | undefined;
   private readonly allowedAccountIds: string[];
@@ -116,7 +162,6 @@ export class JiraAdapter implements IPlatformAdapter {
     userEmail: string,
     apiToken: string,
     webhookSecret: string,
-    lockManager: ConversationLockManager,
     options: JiraAdapterOptions = {}
   ) {
     if (!baseUrl) throw new Error('JiraAdapter requires a non-empty baseUrl');
@@ -128,7 +173,6 @@ export class JiraAdapter implements IPlatformAdapter {
     this.userEmail = userEmail;
     this.apiToken = apiToken;
     this.webhookSecret = webhookSecret;
-    this.lockManager = lockManager;
     this.botMention = options.botMention ?? 'Archon';
     this.botAccountId = options.botAccountId;
     this.allowedAccountIds = options.allowedAccountIds ?? [];
@@ -392,7 +436,7 @@ export class JiraAdapter implements IPlatformAdapter {
   private parseEvent(event: JiraWebhookEvent): ParsedEvent | null {
     if (event.webhookEvent === 'comment_created' && event.issue && event.comment) {
       return {
-        kind: 'comment',
+        kind: 'comment_created',
         issue: event.issue,
         body: extractPlainText(event.comment.body),
         authorAccountId: event.comment.author?.accountId,
@@ -408,7 +452,7 @@ export class JiraAdapter implements IPlatformAdapter {
       const statusItem = items.find(i => i.field === 'status');
       if (statusItem) {
         return {
-          kind: 'status_changed',
+          kind: 'transition',
           issue: event.issue,
           fromStatus: statusItem.fromString ?? '(none)',
           toStatus: statusItem.toString ?? '(none)',
@@ -433,27 +477,69 @@ export class JiraAdapter implements IPlatformAdapter {
   }
 
   // ---------------------------------------------------------------------------
-  // Prompt + context builders
+  // Router payload composition
   // ---------------------------------------------------------------------------
 
-  private buildPromptForEvent(parsed: ParsedEvent): string {
+  /**
+   * Compose the structured JSON payload handed to the router workflow. The
+   * shape is stable and documented — user-authored `jira-router.yaml` depends
+   * on the field names here. Only `undefined` event-specific fields are
+   * omitted (via JSON.stringify), giving the router a clean, predictable
+   * surface to match on.
+   */
+  private composeRouterPayload(parsed: ParsedEvent, projectKey: string): RouterEventPayload {
+    const issue = parsed.issue;
+    const base: RouterEventPayload = {
+      event: parsed.kind,
+      issue_key: issue.key,
+      project: projectKey,
+      issue_type: issue.fields.issuetype?.name,
+      summary: issue.fields.summary,
+      status: issue.fields.status?.name,
+    };
+
     switch (parsed.kind) {
-      case 'comment':
-        return parsed.body;
-      case 'created': {
-        const desc = extractPlainText(parsed.issue.fields.description);
-        return `${parsed.issue.fields.summary}${desc ? `\n\n${desc}` : ''}`;
-      }
-      case 'status_changed':
-        return `Status transitioned: ${parsed.fromStatus} → ${parsed.toStatus}${
-          parsed.actor ? ` by ${parsed.actor}` : ''
-        }\n\nIssue summary: ${parsed.issue.fields.summary}`;
+      case 'comment_created':
+        return {
+          ...base,
+          comment_body: parsed.body,
+          author_account_id: parsed.authorAccountId,
+        };
+      case 'created':
+        return base;
+      case 'transition':
+        return {
+          ...base,
+          from_status: parsed.fromStatus,
+          to_status: parsed.toStatus,
+          actor: parsed.actor,
+        };
       case 'content_changed': {
-        const lines = parsed.fields.map(f => `${f.field}: ${f.value}`).join('\n');
-        return `Issue content changed${parsed.actor ? ` by ${parsed.actor}` : ''}:\n${lines}`;
+        const first = parsed.fields[0];
+        return {
+          ...base,
+          field: first?.field,
+          new_value: first?.value,
+          actor: parsed.actor,
+        };
       }
     }
   }
+
+  /**
+   * Build the slash command the orchestrator will dispatch. The JSON is
+   * appended raw — the tokenizer splits it on whitespace, and
+   * `handleWorkflowRunCommand` rejoins the pieces with single spaces before
+   * handing them to the workflow. See the file header for the full rationale.
+   */
+  private buildRouterCommand(payload: RouterEventPayload): string {
+    const json = JSON.stringify(payload);
+    return `/workflow run ${ROUTER_WORKFLOW_NAME} ${json}`;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Issue context (opaque string passed in MessageMetadata.issueContext)
+  // ---------------------------------------------------------------------------
 
   private buildIssueContext(issue: JiraIssue): string {
     const status = issue.fields.status?.name ?? 'unknown';
@@ -465,30 +551,6 @@ Summary: ${issue.fields.summary}
 Status: ${status}
 Type: ${issueType}
 Reporter: ${reporter}`;
-  }
-
-  // ---------------------------------------------------------------------------
-  // Comment history (chronological, last 20)
-  // ---------------------------------------------------------------------------
-
-  private async fetchCommentHistory(issueKey: string): Promise<string[]> {
-    try {
-      const path = `/rest/api/3/issue/${encodeURIComponent(
-        issueKey
-      )}/comment?orderBy=-created&maxResults=20`;
-      const result = await this.jiraApi<{
-        comments?: { author?: { displayName?: string }; body?: AdfDocument | string }[];
-      }>('GET', path);
-      const comments = (result.comments ?? []).slice().reverse();
-      return comments.map(c => {
-        const author = c.author?.displayName ?? 'unknown';
-        const body = extractPlainText(c.body as AdfDocument | string | null | undefined);
-        return `${author}: ${body}`;
-      });
-    } catch (error) {
-      getLog().error({ err: error, issueKey }, 'jira.comment_history_fetch_failed');
-      return [];
-    }
   }
 
   // ---------------------------------------------------------------------------
@@ -612,39 +674,31 @@ Reporter: ${reporter}`;
         }
       }
 
-      // 8. Build prompt + context
-      const prompt = this.buildPromptForEvent(parsed);
+      // 8. Compose router payload and synthesize the slash command.
+      const routerPayload = this.composeRouterPayload(parsed, projectKey);
+      const command = this.buildRouterCommand(routerPayload);
       const issueContext = this.buildIssueContext(parsed.issue);
-      const commentHistory = await this.fetchCommentHistory(issueKey);
-      const threadContext = commentHistory.length > 0 ? commentHistory.join('\n') : undefined;
 
-      const isolationHints: IsolationHints = {
-        workflowType: 'issue',
-        workflowId: issueKey,
-      };
-
-      // 9. Dispatch
-      await this.lockManager.acquireLock(conversationId, async () => {
+      // 9. Dispatch fire-and-forget. No per-ticket locking — workflows own
+      //    reconciliation + guarded-transition semantics.
+      try {
+        await handleMessage(this, conversationId, command, { issueContext });
+      } catch (error) {
+        const err = toError(error);
+        getLog().error(
+          { err, conversationId, eventKind: parsed.kind },
+          'jira.router_dispatch_failed'
+        );
         try {
-          await handleMessage(this, conversationId, prompt, {
-            issueContext,
-            threadContext,
-            isolationHints,
-          });
-        } catch (error) {
-          const err = toError(error);
-          getLog().error({ err, conversationId }, 'jira.message_handling_error');
-          try {
-            const userMessage = classifyAndFormatError(err);
-            await this.sendMessage(conversationId, userMessage);
-          } catch (sendError) {
-            getLog().error(
-              { err: toError(sendError), conversationId },
-              'jira.error_message_send_failed'
-            );
-          }
+          const userMessage = classifyAndFormatError(err);
+          await this.sendMessage(conversationId, userMessage);
+        } catch (sendError) {
+          getLog().error(
+            { err: toError(sendError), conversationId },
+            'jira.error_message_send_failed'
+          );
         }
-      });
+      }
     } catch (error) {
       const err = toError(error);
       const conversationId = this.buildConversationId(issueKey);

@@ -115,14 +115,29 @@ export interface GlobalConfig {
   };
 
   /**
-   * Jira integration: maps Jira project keys to registered codebase names so
+   * Jira integration: adapter-level configuration.
+   *
+   * `projects` maps Jira project keys to registered codebase names so
    * webhook-driven conversations can locate their working directory.
+   *
+   * `base_url`, `webhook_secret`, `bot_account_id`, and `allowed_account_ids`
+   * are the YAML form of the JIRA_* env vars. Env vars take precedence when
+   * both are set — the server init reads env first and falls back to config.
    *
    * Defined at the global level because the JiraAdapter is a server-wide
    * singleton initialized at startup; per-repo overrides are also supported
    * via the same key on RepoConfig (see below).
    */
   jira?: {
+    /** Jira Cloud base URL, e.g. https://your-domain.atlassian.net */
+    base_url?: string;
+    /** HMAC secret configured on the Jira webhook. */
+    webhook_secret?: string;
+    /** Atlassian accountId of the bot user — comments from this account are ignored. */
+    bot_account_id?: string;
+    /** Optional accountId whitelist — empty/unset = open access. */
+    allowed_account_ids?: string[];
+    /** Map of Jira project key → registered Archon codebase name. */
     projects?: Record<string, string>;
   };
 }
@@ -205,6 +220,10 @@ export interface RepoConfig {
    * Jira integration: maps Jira project keys to registered codebase names.
    * When set on a repo config, entries are merged on top of any global
    * `jira.projects` map (repo entries win for the same key).
+   *
+   * Only `projects` is honored at the repo level — adapter-level fields
+   * (`base_url`, `webhook_secret`, etc.) live exclusively in the global
+   * config because the adapter is a server-wide singleton.
    */
   jira?: {
     projects?: Record<string, string>;
@@ -297,10 +316,15 @@ export interface MergedConfig {
    */
   envVars?: Record<string, string>;
   /**
-   * Jira integration: project-key → codebase-name map merged from global and
-   * repo configs. Undefined when no mapping is configured.
+   * Jira integration: adapter-level fields (from global config only) merged
+   * with the project-key → codebase-name map (global + repo). Undefined when
+   * nothing is configured.
    */
   jira?: {
+    base_url?: string;
+    webhook_secret?: string;
+    bot_account_id?: string;
+    allowed_account_ids?: string[];
     projects?: Record<string, string>;
   };
 }

@@ -334,27 +334,28 @@ export async function startServer(opts: ServerOptions = {}): Promise<void> {
     }
 
     // Initialize Jira adapter (conditional)
-    if (
-      process.env.JIRA_BASE_URL &&
-      process.env.JIRA_USER_EMAIL &&
-      process.env.JIRA_API_TOKEN &&
-      process.env.JIRA_WEBHOOK_SECRET
-    ) {
+    // Credentials resolution: env vars take precedence; config.yaml `jira.*`
+    // fields fill in any gap. Non-secret fields (base_url, bot_account_id,
+    // allowed_account_ids) are routinely set via config.yaml; secrets
+    // (api_token, webhook_secret, user_email) should stay in env/.env.
+    const jiraBaseUrl = process.env.JIRA_BASE_URL || config.jira?.base_url;
+    const jiraUserEmail = process.env.JIRA_USER_EMAIL;
+    const jiraApiToken = process.env.JIRA_API_TOKEN;
+    const jiraWebhookSecret = process.env.JIRA_WEBHOOK_SECRET || config.jira?.webhook_secret;
+    const jiraBotAccountId = process.env.JIRA_BOT_ACCOUNT_ID || config.jira?.bot_account_id;
+    const jiraAllowedAccountIds = process.env.JIRA_ALLOWED_ACCOUNT_IDS
+      ? parseAllowedAccountIds(process.env.JIRA_ALLOWED_ACCOUNT_IDS)
+      : (config.jira?.allowed_account_ids ?? []);
+
+    if (jiraBaseUrl && jiraUserEmail && jiraApiToken && jiraWebhookSecret) {
       const jiraBotMention =
         process.env.JIRA_BOT_MENTION || process.env.BOT_DISPLAY_NAME || config.botName;
-      jira = new JiraAdapter(
-        process.env.JIRA_BASE_URL,
-        process.env.JIRA_USER_EMAIL,
-        process.env.JIRA_API_TOKEN,
-        process.env.JIRA_WEBHOOK_SECRET,
-        lockManager,
-        {
-          botMention: jiraBotMention,
-          botAccountId: process.env.JIRA_BOT_ACCOUNT_ID,
-          allowedAccountIds: parseAllowedAccountIds(process.env.JIRA_ALLOWED_ACCOUNT_IDS),
-          projectCodebaseMap: config.jira?.projects ?? {},
-        }
-      );
+      jira = new JiraAdapter(jiraBaseUrl, jiraUserEmail, jiraApiToken, jiraWebhookSecret, {
+        botMention: jiraBotMention,
+        botAccountId: jiraBotAccountId,
+        allowedAccountIds: jiraAllowedAccountIds,
+        projectCodebaseMap: config.jira?.projects ?? {},
+      });
       await jira.start();
     } else {
       getLog().info('jira_adapter_skipped');
