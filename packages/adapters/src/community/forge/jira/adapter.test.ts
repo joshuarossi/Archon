@@ -88,7 +88,6 @@ interface AdapterOpts {
   email?: string;
   apiToken?: string;
   secret?: string;
-  botMention?: string;
   botAccountId?: string;
   allowedAccountIds?: string[];
   projectCodebaseMap?: Record<string, string>;
@@ -101,7 +100,6 @@ function createAdapter(opts: AdapterOpts = {}): InstanceType<typeof JiraAdapter>
     opts.apiToken ?? 'api-token',
     opts.secret ?? SECRET,
     {
-      botMention: opts.botMention ?? 'archon',
       botAccountId: opts.botAccountId,
       allowedAccountIds: opts.allowedAccountIds,
       projectCodebaseMap: opts.projectCodebaseMap,
@@ -110,21 +108,17 @@ function createAdapter(opts: AdapterOpts = {}): InstanceType<typeof JiraAdapter>
 }
 
 /**
- * Extract the JSON arg from a synthesized router command.
- *
- * Mirrors what `handleWorkflowRunCommand` does: tokenize the command string
- * with the same regex as `parseCommand`, strip command/workflow-name, and
- * rejoin the remaining tokens with single spaces. This is the exact string
- * the workflow receives as `$1` / `$ARGUMENTS`.
+ * Extract the payload from a synthesized router command.
+ * The payload is base64-encoded JSON, so decode and parse it.
  */
 function extractRouterPayload(command: string): Record<string, unknown> {
-  const tokens = command.match(/"[^"]+"|'[^']+'|\S+/g) ?? [];
-  // tokens[0] = "/workflow", tokens[1] = "run", tokens[2] = "jira-router"
+  const tokens = command.match(/\S+/g) ?? [];
+  // tokens[0] = "/workflow", tokens[1] = "run", tokens[2] = "jira-router", tokens[3] = base64
   if (tokens[0] !== '/workflow' || tokens[1] !== 'run' || tokens[2] !== 'jira-router') {
     throw new Error(`Command does not match router shape: ${command}`);
   }
-  const rejoined = tokens.slice(3).join(' ');
-  return JSON.parse(rejoined) as Record<string, unknown>;
+  const decoded = Buffer.from(tokens[3], 'base64').toString('utf8');
+  return JSON.parse(decoded) as Record<string, unknown>;
 }
 
 /** Destructure the captured mockHandleMessage call arguments. */
@@ -411,7 +405,8 @@ describe('JiraAdapter', () => {
 
       expect(mockHandleMessage).toHaveBeenCalledTimes(1);
       const { command } = handleMessageCall();
-      expect(command).toMatch(/^\/workflow run jira-router \{.*\}$/);
+      // Payload is base64-encoded — single whitespace-free token after "jira-router"
+      expect(command).toMatch(/^\/workflow run jira-router [A-Za-z0-9+/]+=*$/);
     });
 
     test('metadata.issueContext is passed through', async () => {
@@ -474,7 +469,7 @@ describe('JiraAdapter', () => {
       expect(router.actor).toBe('User One');
     });
 
-    test('content_changed payload carries field and new_value', async () => {
+    test('content_changed payload carries changes array with all modified fields', async () => {
       const adapter = createAdapter({
         projectCodebaseMap: { PROJ: 'my-codebase' },
       });
@@ -483,22 +478,59 @@ describe('JiraAdapter', () => {
 
       const router = extractRouterPayload(handleMessageCall().command);
       expect(router.event).toBe('content_changed');
-      expect(router.field).toBe('summary');
-      expect(router.new_value).toBe('Updated summary');
+      expect(Array.isArray(router.changes)).toBe(true);
+      const changes = router.changes as { field: string; new_value: string }[];
+      expect(changes).toHaveLength(1);
+      expect(changes[0].field).toBe('summary');
+      expect(changes[0].new_value).toBe('Updated summary');
       expect(router.actor).toBe('User One');
     });
 
-    test('raw-JSON carrier survives apostrophes, quotes, and embedded whitespace', async () => {
-      // Regression guard: verify the tokenizer + rejoin round-trip preserves
-      // apostrophes (which would break single-quoted wrapping), double-quotes
-      // (which delimit JSON itself), and single-space content inside values.
-      const issueKey = 'PROJ-99';
-      const trickySummary = `Joe's "auth" bug — with backticks \` and embedded newline \\n here`;
+    test('content_changed with both summary and description carries both in changes array', async () => {
+      const adapter = createAdapter({
+        projectCodebaseMap: { PROJ: 'my-codebase' },
+      });
+      const multi = JSON.stringify({
+        webhookEvent: 'jira:issue_updated',
+        user: { accountId: 'user-1', displayName: 'User One' },
+        issue: {
+          id: '10004',
+          key: 'PROJ-4',
+          fields: {
+            summary: 'New summary',
+            status: { name: 'To Do' },
+            issuetype: { name: 'Task' },
+            reporter: { accountId: 'user-1', displayName: 'User One' },
+            project: { id: '1', key: 'PROJ', name: 'PROJ' },
+          },
+        },
+        changelog: {
+          items: [
+            { field: 'summary', fromString: 'Old', toString: 'New summary' },
+            { field: 'description', fromString: 'Old body', toString: 'New body' },
+          ],
+        },
+      });
+      await adapter.handleWebhook(multi, sign(multi));
+
+      const router = extractRouterPayload(handleMessageCall().command);
+      expect(router.event).toBe('content_changed');
+      const changes = router.changes as { field: string; new_value: string }[];
+      expect(changes).toHaveLength(2);
+      expect(changes.find(c => c.field === 'summary')?.new_value).toBe('New summary');
+      expect(changes.find(c => c.field === 'description')?.new_value).toBe('New body');
+    });
+
+    test('base64 payload round-trips arbitrary strings including trailing spaces and special chars', async () => {
+      // Regression guard: base64 encoding must preserve all content without
+      // corruption — trailing spaces, quotes, apostrophes, and high-range unicode.
+      const issueKey = 'PROJ-504';
+      const trickySummary = `PROJ-504 Joe's "auth" bug — trailing space `;
       const tricky = JSON.stringify({
         webhookEvent: 'jira:issue_created',
         user: { accountId: 'user-1', displayName: 'User One' },
         issue: {
-          id: '99',
+          id: '504',
           key: issueKey,
           fields: {
             summary: trickySummary,
@@ -585,54 +617,6 @@ describe('JiraAdapter', () => {
   });
 
   describe('self-trigger prevention', () => {
-    test('marker in comment skipped', async () => {
-      const adapter = createAdapter({
-        projectCodebaseMap: { PROJ: 'my-codebase' },
-      });
-      const payload = commentPayload({
-        body: 'hi from bot\n\n<!-- archon-bot-response -->',
-      });
-      await adapter.handleWebhook(payload, sign(payload));
-      expect(mockHandleMessage).not.toHaveBeenCalled();
-    });
-
-    test('marker in nested ADF body skipped', async () => {
-      const adapter = createAdapter({
-        projectCodebaseMap: { PROJ: 'my-codebase' },
-      });
-      const adfBody = {
-        type: 'doc',
-        version: 1,
-        content: [
-          {
-            type: 'paragraph',
-            content: [{ type: 'text', text: 'reply' }],
-          },
-          {
-            type: 'paragraph',
-            content: [{ type: 'text', text: '<!-- archon-bot-response -->' }],
-          },
-        ],
-      };
-      const payload = JSON.stringify({
-        webhookEvent: 'comment_created',
-        issue: {
-          id: '1',
-          key: 'PROJ-1',
-          fields: {
-            summary: 's',
-            status: { name: 'To Do' },
-            issuetype: { name: 'Task' },
-            reporter: { accountId: 'r' },
-            project: { id: '1', key: 'PROJ', name: 'PROJ' },
-          },
-        },
-        comment: { id: '1', body: adfBody, author: { accountId: 'user-1' } },
-      });
-      await adapter.handleWebhook(payload, sign(payload));
-      expect(mockHandleMessage).not.toHaveBeenCalled();
-    });
-
     test('bot accountId skipped', async () => {
       const adapter = createAdapter({
         botAccountId: 'bot-acct',
@@ -643,12 +627,22 @@ describe('JiraAdapter', () => {
       expect(mockHandleMessage).not.toHaveBeenCalled();
     });
 
-    test('normal comment proceeds', async () => {
+    test('normal comment proceeds when botAccountId configured', async () => {
       const adapter = createAdapter({
         botAccountId: 'bot-acct',
         projectCodebaseMap: { PROJ: 'my-codebase' },
       });
       const payload = commentPayload({ authorAccountId: 'human-1' });
+      await adapter.handleWebhook(payload, sign(payload));
+      expect(mockHandleMessage).toHaveBeenCalledTimes(1);
+    });
+
+    test('comment proceeds when botAccountId not configured (no self-trigger guard)', async () => {
+      // Without botAccountId, self-trigger prevention is disabled — all comments dispatch.
+      const adapter = createAdapter({
+        projectCodebaseMap: { PROJ: 'my-codebase' },
+      });
+      const payload = commentPayload({ authorAccountId: 'any-acct' });
       await adapter.handleWebhook(payload, sign(payload));
       expect(mockHandleMessage).toHaveBeenCalledTimes(1);
     });
@@ -752,8 +746,8 @@ describe('JiraAdapter', () => {
       expect(body.body.version).toBe(1);
       expect(Array.isArray(body.body.content)).toBe(true);
 
-      // Marker must appear somewhere in the serialized body
-      expect(init.body as string).toContain('<!-- archon-bot-response -->');
+      // Marker must NOT appear in the comment (would render as literal text in ADF)
+      expect(init.body as string).not.toContain('<!-- archon-bot-response -->');
     });
 
     test('long message splits into multiple POSTs', async () => {

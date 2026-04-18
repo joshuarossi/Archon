@@ -4,7 +4,7 @@
  * Community forge adapter — see packages/adapters/src/community/forge/README.md
  *
  * Translates four Jira webhook event types into a single deterministic slash
- * command, `/workflow run jira-router <json>`, and hands it off to the
+ * command, `/workflow run jira-router <base64>`, and hands it off to the
  * existing orchestrator dispatch path. All routing logic lives in the
  * user-authored `jira-router.yaml` workflow — this adapter has no knowledge
  * of which downstream workflow should run for which event.
@@ -16,21 +16,19 @@
  *   - jira:issue_updated (summary/description)→ event: "content_changed"
  *   - comment_created                         → event: "comment_created"
  *
- * The JSON payload is appended verbatim (no quoting, no encoding). This
- * works because the orchestrator's tokenizer
- * (`parseCommand` in `packages/core/src/handlers/command-handler.ts`) splits
- * on whitespace via `\S+`, and `handleWorkflowRunCommand` reassembles
- * `args.slice(2).join(' ')` before handing the string to the workflow.
- * Apostrophes and double-quotes inside JSON values are safe — the greedy
- * `\S+` alternative wins at the leading `{`, so the tokenizer never
- * attempts to match quote-delimited substrings mid-JSON. The one
- * cosmetic cost: multiple consecutive spaces inside string values
- * collapse to a single space on the round-trip. This never affects
- * routing keys (event, to_status, etc., all whitespace-free) and is
- * acceptable for summary/body content.
+ * The JSON payload is base64-encoded before being appended as the sole
+ * argument to the router command. This keeps the argument as a single
+ * whitespace-free token, making it immune to the orchestrator tokenizer's
+ * `\S+` / `"[^"]+"` alternation, which would otherwise corrupt JSON values
+ * that end with whitespace (e.g. summary "PROJ-504 " would cause the
+ * tokenizer to match the subsequent `","` separator as a quoted token and
+ * dequote it to `,`, producing invalid JSON). In `jira-router.yaml`, decode
+ * with `Buffer.from($1, 'base64').toString('utf8')` before parsing.
  *
- * Self-triggering is prevented for comment events via the BOT_RESPONSE_MARKER
- * appended to outbound comments, plus an optional bot accountId match.
+ * Self-triggering is prevented for comment events via an optional
+ * `botAccountId` match. Configure `JIRA_BOT_ACCOUNT_ID` (or
+ * `jira.bot_account_id` in config.yaml) to enable this guard; without it,
+ * the adapter cannot distinguish bot-authored comments from human comments.
  *
  * Authorization (optional) is enforced at the event level via
  * JIRA_ALLOWED_ACCOUNT_IDS — empty list means open access.
@@ -73,9 +71,6 @@ function getLog(): ReturnType<typeof createLogger> {
 
 const MAX_LENGTH = 32000; // Practical limit for Jira comments
 
-/** Hidden marker added to bot comments to prevent self-triggering loops */
-const BOT_RESPONSE_MARKER = '<!-- archon-bot-response -->';
-
 /** Project key format: uppercase alphanumeric + underscore, hyphen, then digits */
 const ISSUE_KEY_PATTERN = /^[A-Z][A-Z0-9_]+-\d+$/;
 
@@ -89,7 +84,6 @@ const ISSUE_KEY_PATTERN = /^[A-Z][A-Z0-9_]+-\d+$/;
 const ROUTER_WORKFLOW_NAME = 'jira-router';
 
 export interface JiraAdapterOptions {
-  botMention?: string;
   botAccountId?: string;
   allowedAccountIds?: string[];
   /** Map of Jira project key (e.g. "PROJ") → registered codebase name. */
@@ -139,11 +133,22 @@ interface RouterEventPayload {
   status?: string;
   from_status?: string;
   to_status?: string;
-  field?: string;
-  new_value?: string;
+  /** Present for content_changed events: all fields changed in this update. */
+  changes?: { field: string; new_value: string }[];
   comment_body?: string;
   author_account_id?: string;
   actor?: string;
+}
+
+/** Typed error carrying the HTTP status code from a failed Jira API call. */
+class JiraApiError extends Error {
+  constructor(
+    public readonly status: number,
+    message: string
+  ) {
+    super(message);
+    this.name = 'JiraApiError';
+  }
 }
 
 export class JiraAdapter implements IPlatformAdapter {
@@ -152,7 +157,6 @@ export class JiraAdapter implements IPlatformAdapter {
   private readonly apiToken: string;
   private readonly webhookSecret: string;
   private readonly authHeader: string;
-  private readonly botMention: string;
   private readonly botAccountId: string | undefined;
   private readonly allowedAccountIds: string[];
   private readonly projectCodebaseMap: Record<string, string>;
@@ -173,7 +177,6 @@ export class JiraAdapter implements IPlatformAdapter {
     this.userEmail = userEmail;
     this.apiToken = apiToken;
     this.webhookSecret = webhookSecret;
-    this.botMention = options.botMention ?? 'Archon';
     this.botAccountId = options.botAccountId;
     this.allowedAccountIds = options.allowedAccountIds ?? [];
     this.projectCodebaseMap = options.projectCodebaseMap ?? {};
@@ -187,10 +190,15 @@ export class JiraAdapter implements IPlatformAdapter {
       getLog().info('jira.allowlist_disabled');
     }
 
+    if (!this.botAccountId) {
+      getLog().warn(
+        'jira.bot_account_id_not_configured — self-trigger prevention for comment events is disabled; set JIRA_BOT_ACCOUNT_ID or jira.bot_account_id in config.yaml'
+      );
+    }
+
     getLog().info(
       {
         baseUrl: this.baseUrl,
-        botMention: this.botMention,
         botAccountIdConfigured: Boolean(this.botAccountId),
         mappedProjectCount: Object.keys(this.projectCodebaseMap).length,
       },
@@ -319,7 +327,8 @@ export class JiraAdapter implements IPlatformAdapter {
     });
     if (!response.ok) {
       const text = await response.text();
-      throw new Error(
+      throw new JiraApiError(
+        response.status,
         `Jira API ${method} ${path}: ${String(response.status)} ${response.statusText} - ${text}`
       );
     }
@@ -331,14 +340,9 @@ export class JiraAdapter implements IPlatformAdapter {
   // ADF body construction (outbound)
   // ---------------------------------------------------------------------------
 
-  /**
-   * Wrap a plain-text message in an ADF document.
-   * Each blank-line-separated block becomes a paragraph; the marker is added
-   * as a final paragraph so it survives Jira's rendering.
-   */
+  /** Wrap a plain-text message in an ADF document. Each blank-line-separated block becomes a paragraph. */
   private toAdfDocument(message: string): AdfDocument {
-    const text = `${message}\n\n${BOT_RESPONSE_MARKER}`;
-    const paragraphs = text.split(/\n{2,}/).map(para => ({
+    const paragraphs = message.split(/\n{2,}/).map(para => ({
       type: 'paragraph',
       content: [{ type: 'text', text: para }],
     }));
@@ -354,22 +358,22 @@ export class JiraAdapter implements IPlatformAdapter {
   // ---------------------------------------------------------------------------
 
   private isRetryableError(error: unknown): boolean {
+    // HTTP errors: retry on rate-limit and server-side failures only.
+    if (error instanceof JiraApiError) {
+      return error.status === 429 || error.status >= 500;
+    }
+    // Transport-level errors (pre-response): retry on network failures.
     const err = error as Error | undefined;
     const message = err?.message ?? '';
     const causeErr = (error as { cause?: Error }).cause;
     const cause = causeErr?.message ?? '';
     const combined = `${message} ${cause}`.toLowerCase();
-
     return (
       combined.includes('timeout') ||
       combined.includes('econnrefused') ||
       combined.includes('econnreset') ||
       combined.includes('etimedout') ||
-      combined.includes('fetch failed') ||
-      combined.includes('429') ||
-      combined.includes('502') ||
-      combined.includes('503') ||
-      combined.includes('504')
+      combined.includes('fetch failed')
     );
   }
 
@@ -514,27 +518,19 @@ export class JiraAdapter implements IPlatformAdapter {
           to_status: parsed.toStatus,
           actor: parsed.actor,
         };
-      case 'content_changed': {
-        const first = parsed.fields[0];
+      case 'content_changed':
         return {
           ...base,
-          field: first?.field,
-          new_value: first?.value,
+          changes: parsed.fields.map(f => ({ field: f.field, new_value: f.value })),
           actor: parsed.actor,
         };
-      }
     }
   }
 
-  /**
-   * Build the slash command the orchestrator will dispatch. The JSON is
-   * appended raw — the tokenizer splits it on whitespace, and
-   * `handleWorkflowRunCommand` rejoins the pieces with single spaces before
-   * handing them to the workflow. See the file header for the full rationale.
-   */
+  /** Build the slash command dispatched to the orchestrator. The payload is base64-encoded to produce a single whitespace-free token. */
   private buildRouterCommand(payload: RouterEventPayload): string {
-    const json = JSON.stringify(payload);
-    return `/workflow run ${ROUTER_WORKFLOW_NAME} ${json}`;
+    const encoded = Buffer.from(JSON.stringify(payload)).toString('base64');
+    return `/workflow run ${ROUTER_WORKFLOW_NAME} ${encoded}`;
   }
 
   // ---------------------------------------------------------------------------
@@ -608,23 +604,19 @@ Reporter: ${reporter}`;
       return;
     }
 
-    // 4. Self-trigger prevention (comments only — bot writes only comments)
-    if (event.webhookEvent === 'comment_created' && event.comment) {
-      const body = extractPlainText(event.comment.body);
-      if (body.includes(BOT_RESPONSE_MARKER)) {
-        getLog().debug(
-          { commentAuthor: event.comment.author?.accountId },
-          'jira.ignoring_marked_comment'
-        );
-        return;
-      }
-      if (this.botAccountId && event.comment.author?.accountId === this.botAccountId) {
-        getLog().debug(
-          { commentAuthor: event.comment.author.accountId },
-          'jira.ignoring_own_comment'
-        );
-        return;
-      }
+    // 4. Self-trigger prevention (comments only — bot writes only comments).
+    // Requires botAccountId to be configured; see startup warning if absent.
+    if (
+      event.webhookEvent === 'comment_created' &&
+      event.comment &&
+      this.botAccountId &&
+      event.comment.author?.accountId === this.botAccountId
+    ) {
+      getLog().debug(
+        { commentAuthor: event.comment.author.accountId },
+        'jira.ignoring_own_comment'
+      );
+      return;
     }
 
     // 5. Discriminate event

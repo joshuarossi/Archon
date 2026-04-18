@@ -276,10 +276,10 @@ export async function startServer(opts: ServerOptions = {}): Promise<void> {
     );
     const hasGitLab = Boolean(process.env.GITLAB_TOKEN && process.env.GITLAB_WEBHOOK_SECRET);
     const hasJira = Boolean(
-      process.env.JIRA_BASE_URL &&
+      (process.env.JIRA_BASE_URL || config.jira?.base_url) &&
       process.env.JIRA_USER_EMAIL &&
       process.env.JIRA_API_TOKEN &&
-      process.env.JIRA_WEBHOOK_SECRET
+      (process.env.JIRA_WEBHOOK_SECRET || config.jira?.webhook_secret)
     );
 
     if (!hasTelegram && !hasDiscord && !hasGitHub && !hasGitea && !hasGitLab && !hasJira) {
@@ -348,10 +348,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<void> {
       : (config.jira?.allowed_account_ids ?? []);
 
     if (jiraBaseUrl && jiraUserEmail && jiraApiToken && jiraWebhookSecret) {
-      const jiraBotMention =
-        process.env.JIRA_BOT_MENTION || process.env.BOT_DISPLAY_NAME || config.botName;
       jira = new JiraAdapter(jiraBaseUrl, jiraUserEmail, jiraApiToken, jiraWebhookSecret, {
-        botMention: jiraBotMention,
         botAccountId: jiraBotAccountId,
         allowedAccountIds: jiraAllowedAccountIds,
         projectCodebaseMap: config.jira?.projects ?? {},

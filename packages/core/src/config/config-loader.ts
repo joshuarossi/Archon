@@ -487,9 +487,10 @@ function mergeRepoConfig(merged: MergedConfig, repo: RepoConfig): MergedConfig {
     result.envVars = { ...result.envVars, ...repo.env };
   }
 
-  // Jira project → codebase mapping (repo overrides global per key)
+  // Jira project → codebase mapping (repo overrides global per key; adapter fields stay from global)
   if (repo.jira?.projects && Object.keys(repo.jira.projects).length > 0) {
     result.jira = {
+      ...(result.jira ?? {}),
       projects: { ...(result.jira?.projects ?? {}), ...repo.jira.projects },
     };
   }
