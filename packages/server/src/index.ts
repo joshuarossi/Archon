@@ -586,9 +586,20 @@ export async function startServer(opts: ServerOptions = {}): Promise<void> {
         const signature = c.req.header('x-hub-signature');
         const payload = await c.req.text();
 
-        jira.handleWebhook(payload, signature).catch((error: unknown) => {
-          getLog().error({ err: error, eventType }, 'jira.webhook_processing_error');
-        });
+        getLog().info(
+          {
+            atlassianWebhookId: eventType,
+            payloadSize: payload.length,
+            hasSignature: !!signature,
+          },
+          'jira.webhook_http_in'
+        );
+
+        jira
+          .handleWebhook(payload, signature, { atlassianWebhookId: eventType })
+          .catch((error: unknown) => {
+            getLog().error({ err: error, eventType }, 'jira.webhook_processing_error');
+          });
 
         return c.text('OK', 200);
       } catch (error) {

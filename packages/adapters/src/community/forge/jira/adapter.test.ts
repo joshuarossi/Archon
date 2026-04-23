@@ -364,14 +364,37 @@ describe('JiraAdapter', () => {
   });
 
   describe('conversation ID format', () => {
-    test('PROJ-1 round-trips', async () => {
+    test('PROJ-1 uses issueKey::deliveryToken (local token without webhook header)', async () => {
       const adapter = createAdapter({
         projectCodebaseMap: { PROJ: 'my-codebase' },
       });
       const payload = commentPayload({ issueKey: 'PROJ-1' });
       await adapter.handleWebhook(payload, sign(payload));
       expect(mockHandleMessage).toHaveBeenCalledTimes(1);
-      expect(handleMessageCall().conversationId).toBe('PROJ-1');
+      expect(handleMessageCall().conversationId).toMatch(/^PROJ-1::local-[0-9a-f-]{36}$/i);
+    });
+
+    test('Atlassian webhook id is used as delivery suffix when provided', async () => {
+      const adapter = createAdapter({
+        projectCodebaseMap: { PROJ: 'my-codebase' },
+      });
+      const payload = commentPayload({ issueKey: 'PROJ-1' });
+      await adapter.handleWebhook(payload, sign(payload), {
+        atlassianWebhookId: '6606435970124748721',
+      });
+      expect(handleMessageCall().conversationId).toBe('PROJ-1::6606435970124748721');
+    });
+
+    test('two deliveries same issue → two conversation ids', async () => {
+      const adapter = createAdapter({
+        projectCodebaseMap: { PROJ: 'my-codebase' },
+      });
+      const payload = commentPayload({ issueKey: 'PROJ-1' });
+      await adapter.handleWebhook(payload, sign(payload), { atlassianWebhookId: 'delivery-a' });
+      await adapter.handleWebhook(payload, sign(payload), { atlassianWebhookId: 'delivery-b' });
+      expect(handleMessageCall(0).conversationId).toBe('PROJ-1::delivery-a');
+      expect(handleMessageCall(1).conversationId).toBe('PROJ-1::delivery-b');
+      expect(handleMessageCall(0).conversationId).not.toBe(handleMessageCall(1).conversationId);
     });
 
     test('FOO_BAR-123 accepted', async () => {
@@ -379,9 +402,9 @@ describe('JiraAdapter', () => {
         projectCodebaseMap: { FOO_BAR: 'my-codebase' },
       });
       const payload = commentPayload({ issueKey: 'FOO_BAR-123', projectKey: 'FOO_BAR' });
-      await adapter.handleWebhook(payload, sign(payload));
+      await adapter.handleWebhook(payload, sign(payload), { atlassianWebhookId: 'w1' });
       expect(mockHandleMessage).toHaveBeenCalledTimes(1);
-      expect(handleMessageCall().conversationId).toBe('FOO_BAR-123');
+      expect(handleMessageCall().conversationId).toBe('FOO_BAR-123::w1');
     });
 
     test('sendMessage rejects invalid conversation ids', async () => {
@@ -748,6 +771,15 @@ describe('JiraAdapter', () => {
 
       // Marker must NOT appear in the comment (would render as literal text in ADF)
       expect(init.body as string).not.toContain('<!-- archon-bot-response -->');
+    });
+
+    test('conversation id with ::suffix still posts to bare issue key', async () => {
+      const adapter = createAdapter();
+      mockFetch.mockClear();
+      await adapter.sendMessage('PROJ-1::6606435970124748721', 'hi');
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      const [url] = mockFetch.mock.calls[0] as unknown as [string, RequestInit];
+      expect(url).toContain('/rest/api/3/issue/PROJ-1/comment');
     });
 
     test('long message splits into multiple POSTs', async () => {

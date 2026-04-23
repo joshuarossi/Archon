@@ -37,11 +37,12 @@
  * Archon codebase names via `jira.projects` in `~/.archon/config.yaml`
  * (or `.archon/config.yaml`). Unmapped projects log a warning and abort.
  *
- * Concurrency: fire-and-forget. Multiple events for the same ticket may
- * produce concurrent workflow runs. The router workflow is responsible for
- * reconciliation (inspect artifacts on entry, guard transitions on exit).
+ * Concurrency: each webhook HTTP delivery uses a distinct platform
+ * conversation id (`issueKey::deliveryToken`) so isolation does not reuse the
+ * prior row's `isolation_env_id` / working_path across overlapping runs for the
+ * same Jira issue.
  */
-import { createHmac, timingSafeEqual } from 'crypto';
+import { createHmac, randomUUID, timingSafeEqual } from 'crypto';
 import type { IPlatformAdapter, MessageMetadata } from '@archon/core';
 import {
   ConversationNotFoundError,
@@ -74,6 +75,9 @@ const MAX_LENGTH = 32000; // Practical limit for Jira comments
 /** Project key format: uppercase alphanumeric + underscore, hyphen, then digits */
 const ISSUE_KEY_PATTERN = /^[A-Z][A-Z0-9_]+-\d+$/;
 
+/** Separates Jira issue key from per-delivery suffix in `platform_conversation_id`. */
+const CONVERSATION_DELIVERY_SEPARATOR = '::';
+
 /**
  * Router workflow that every Jira webhook dispatches to. Must exist as
  * `jira-router.yaml` in the user's workflow directories (repo or
@@ -88,6 +92,12 @@ export interface JiraAdapterOptions {
   allowedAccountIds?: string[];
   /** Map of Jira project key (e.g. "PROJ") → registered codebase name. */
   projectCodebaseMap?: Record<string, string>;
+}
+
+/** Optional HTTP metadata for correlating adapter logs with `/webhooks/jira` requests. */
+export interface JiraWebhookIngestMeta {
+  /** Value of `x-atlassian-webhook-identifier` when present. */
+  atlassianWebhookId?: string;
 }
 
 interface ParsedCommentEvent {
@@ -415,16 +425,33 @@ export class JiraAdapter implements IPlatformAdapter {
   }
 
   // ---------------------------------------------------------------------------
-  // Conversation ID: issueKey verbatim (e.g. "PROJ-123")
+  // Conversation ID: issueKey + per-webhook delivery token (e.g. PROJ-123::<id>)
   // ---------------------------------------------------------------------------
 
-  private buildConversationId(issueKey: string): string {
-    return issueKey;
+  /**
+   * Build a unique platform conversation id per webhook delivery so each run
+   * gets a fresh DB conversation (no shared isolation_env_id / cwd with prior runs).
+   */
+  private buildConversationId(issueKey: string, deliveryToken: string): string {
+    const safeToken = deliveryToken.trim();
+    if (!safeToken) {
+      return `${issueKey}${CONVERSATION_DELIVERY_SEPARATOR}local-${randomUUID()}`;
+    }
+    return `${issueKey}${CONVERSATION_DELIVERY_SEPARATOR}${safeToken}`;
+  }
+
+  /** Prefer `x-atlassian-webhook-identifier`; otherwise a random token (tests / missing header). */
+  private resolveWebhookDeliveryToken(meta: JiraWebhookIngestMeta | undefined): string {
+    const id = meta?.atlassianWebhookId?.trim();
+    if (id) return id;
+    return `local-${randomUUID()}`;
   }
 
   private parseConversationId(conversationId: string): { issueKey: string } | null {
-    if (!ISSUE_KEY_PATTERN.test(conversationId)) return null;
-    return { issueKey: conversationId };
+    const sep = conversationId.indexOf(CONVERSATION_DELIVERY_SEPARATOR);
+    const issuePart = sep >= 0 ? conversationId.slice(0, sep) : conversationId;
+    if (!ISSUE_KEY_PATTERN.test(issuePart)) return null;
+    return { issueKey: issuePart };
   }
 
   private projectKeyFromIssueKey(issueKey: string): string | null {
@@ -533,6 +560,40 @@ export class JiraAdapter implements IPlatformAdapter {
     return `/workflow run ${ROUTER_WORKFLOW_NAME} ${encoded}`;
   }
 
+  /** Normalize a string for stable isolation hint identifiers. */
+  private normalizeIsolationHintPart(value: string | undefined): string {
+    if (!value) return 'unknown';
+    const normalized = value
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 32);
+    return normalized || 'unknown';
+  }
+
+  /**
+   * Build an issue-scoped, stage-specific workflow ID for isolation.
+   * This prevents created/transition handlers for the same ticket from colliding.
+   */
+  private buildIsolationWorkflowId(parsed: ParsedEvent): string {
+    const issueKey = this.normalizeIsolationHintPart(parsed.issue.key);
+    switch (parsed.kind) {
+      case 'created': {
+        const status = this.normalizeIsolationHintPart(parsed.issue.fields.status?.name);
+        return `${issueKey}-created-${status}`;
+      }
+      case 'transition': {
+        const from = this.normalizeIsolationHintPart(parsed.fromStatus);
+        const to = this.normalizeIsolationHintPart(parsed.toStatus);
+        return `${issueKey}-transition-${from}-to-${to}`;
+      }
+      case 'comment_created':
+        return `${issueKey}-comment-created`;
+      case 'content_changed':
+        return `${issueKey}-content-changed`;
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Issue context (opaque string passed in MessageMetadata.issueContext)
   // ---------------------------------------------------------------------------
@@ -573,7 +634,21 @@ Reporter: ${reporter}`;
   // Webhook handler
   // ---------------------------------------------------------------------------
 
-  async handleWebhook(payload: string, signature: string | undefined): Promise<void> {
+  async handleWebhook(
+    payload: string,
+    signature: string | undefined,
+    meta?: JiraWebhookIngestMeta
+  ): Promise<void> {
+    const atlassianWebhookId = meta?.atlassianWebhookId;
+    getLog().info(
+      {
+        payloadSize: payload.length,
+        hasSignature: !!signature,
+        atlassianWebhookId,
+      },
+      'jira.webhook_received'
+    );
+
     // 1. Verify signature
     if (!signature) {
       getLog().error({ payloadSize: payload.length }, 'jira.missing_webhook_signature');
@@ -595,6 +670,17 @@ Reporter: ${reporter}`;
       getLog().error({ err: error, payloadSize: payload.length }, 'jira.webhook_parse_failed');
       return;
     }
+
+    getLog().info(
+      {
+        atlassianWebhookId,
+        jiraWebhookEvent: event.webhookEvent,
+        issueEventTypeName: event.issue_event_type_name,
+        issueKey: event.issue?.key,
+        timestamp: event.timestamp,
+      },
+      'jira.webhook_parsed'
+    );
 
     // 3. Authorization (accountId allowlist) — fall back to comment author for comment events
     const senderAccountId = event.user?.accountId ?? event.comment?.author?.accountId;
@@ -622,7 +708,10 @@ Reporter: ${reporter}`;
     // 5. Discriminate event
     const parsed = this.parseEvent(event);
     if (!parsed) {
-      getLog().debug({ webhookEvent: event.webhookEvent }, 'jira.unhandled_event');
+      getLog().info(
+        { atlassianWebhookId, webhookEvent: event.webhookEvent },
+        'jira.unhandled_event'
+      );
       return;
     }
 
@@ -633,7 +722,18 @@ Reporter: ${reporter}`;
       return;
     }
 
-    getLog().info({ eventKind: parsed.kind, issueKey, projectKey }, 'jira.webhook_processing');
+    getLog().info(
+      {
+        atlassianWebhookId,
+        eventKind: parsed.kind,
+        issueKey,
+        projectKey,
+        ...(parsed.kind === 'transition'
+          ? { fromStatus: parsed.fromStatus, toStatus: parsed.toStatus }
+          : {}),
+      },
+      'jira.webhook_processing'
+    );
 
     try {
       // 6. Resolve codebase via explicit YAML mapping
@@ -643,8 +743,9 @@ Reporter: ${reporter}`;
         return;
       }
 
-      // 7. Conversation setup
-      const conversationId = this.buildConversationId(issueKey);
+      // 7. Conversation setup — new platform id per HTTP delivery (isolation is per row)
+      const deliveryToken = this.resolveWebhookDeliveryToken(meta);
+      const conversationId = this.buildConversationId(issueKey, deliveryToken);
       const existingConv = await db.getOrCreateConversation('jira', conversationId);
       const isNewConversation = !existingConv.codebase_id;
 
@@ -670,15 +771,50 @@ Reporter: ${reporter}`;
       const routerPayload = this.composeRouterPayload(parsed, projectKey);
       const command = this.buildRouterCommand(routerPayload);
       const issueContext = this.buildIssueContext(parsed.issue);
+      const isolationWorkflowId = this.buildIsolationWorkflowId(parsed);
+      const routerPrefix = `/workflow run ${ROUTER_WORKFLOW_NAME} `;
+      const base64PayloadChars = command.startsWith(routerPrefix)
+        ? command.slice(routerPrefix.length).length
+        : 0;
 
-      // 9. Dispatch fire-and-forget. No per-ticket locking — workflows own
-      //    reconciliation + guarded-transition semantics.
+      getLog().info(
+        {
+          atlassianWebhookId,
+          conversationId,
+          issueKey,
+          eventKind: parsed.kind,
+          isolationWorkflowId,
+          isolationWorkflowType: 'issue' as const,
+          routerWorkflow: ROUTER_WORKFLOW_NAME,
+          commandBytes: Buffer.byteLength(command, 'utf8'),
+          base64PayloadChars,
+        },
+        'jira.router_dispatch_start'
+      );
+
+      // 9. Dispatch to orchestrator (isolation + path lock are per conversation)
       try {
-        await handleMessage(this, conversationId, command, { issueContext });
+        await handleMessage(this, conversationId, command, {
+          issueContext,
+          isolationHints: {
+            workflowType: 'issue',
+            workflowId: isolationWorkflowId,
+          },
+        });
+        getLog().info(
+          {
+            atlassianWebhookId,
+            conversationId,
+            issueKey,
+            eventKind: parsed.kind,
+            isolationWorkflowId,
+          },
+          'jira.router_dispatch_ok'
+        );
       } catch (error) {
         const err = toError(error);
         getLog().error(
-          { err, conversationId, eventKind: parsed.kind },
+          { err, conversationId, eventKind: parsed.kind, atlassianWebhookId },
           'jira.router_dispatch_failed'
         );
         try {
@@ -693,7 +829,10 @@ Reporter: ${reporter}`;
       }
     } catch (error) {
       const err = toError(error);
-      const conversationId = this.buildConversationId(issueKey);
+      const deliveryToken = this.resolveWebhookDeliveryToken(
+        atlassianWebhookId ? { atlassianWebhookId } : undefined
+      );
+      const conversationId = this.buildConversationId(issueKey, deliveryToken);
       getLog().error({ err, conversationId, issueKey }, 'jira.webhook_setup_failed');
       try {
         const userMessage = classifyAndFormatError(err);
