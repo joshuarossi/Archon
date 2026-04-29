@@ -1,0 +1,200 @@
+name: epic-decompose
+description: Decompose an Epic into Tasks with dependency planning.
+
+worktree:
+  enabled: true
+
+nodes:
+  - id: decode
+    bash: |
+      set -euo pipefail
+      bun -e '
+        const raw = process.argv[1];
+        if (!raw) {
+          throw new Error("Missing JSON payload input");
+        }
+        let obj;
+        try {
+          const decoded = Buffer.from(raw, "base64").toString("utf8");
+          obj = JSON.parse(decoded);
+        } catch {
+          obj = JSON.parse(raw);
+        }
+        process.stdout.write(JSON.stringify(obj));
+      ' -- "$ARGUMENTS"
+
+  - id: write-trigger-artifact
+    depends_on: [ decode ]
+    prompt: |
+      Persist the webhook payload as the first handoff artifact.
+
+      Input payload JSON:
+      $decode.output
+
+      Write the payload to `$ARTIFACTS_DIR/trigger-payload.json` as pretty JSON.
+
+      Return STRICT JSON only:
+      {
+        "trigger_payload": "$ARTIFACTS_DIR/trigger-payload.json"
+      }
+
+  - id: fetch-epic-ticket
+    depends_on: [ write-trigger-artifact ]
+    context: fresh
+    mcp: /home/user/Archon/.archon/mcp/atlassian.json
+    prompt: |
+      You are gathering Jira Epic context for decomposition planning.
+      Use Atlassian MCP tools only.
+
+      Read `$ARTIFACTS_DIR/trigger-payload.json` first.
+      Use its `issue_key` as the Epic key.
+
+      Do these steps:
+      1) Fetch the full Epic issue details, including long-form description and any linked issue metadata that clarifies scope.
+      2) Extract a clean summary that includes:
+         - Epic key/title/current status
+         - full description content (expanded, not abbreviated)
+         - explicit goals/outcomes/constraints
+         - any acceptance criteria and open questions
+      3) Include a machine-usable list of attachment metadata found on the Epic:
+         - attachment id (if available)
+         - filename
+         - media/content type
+         - download URL
+         - size (if available)
+
+      Write markdown to `$ARTIFACTS_DIR/epic-context.md` with sections:
+      - `# Epic Context`
+      - `## Scope Summary`
+      - `## Full Description`
+      - `## Attachment Inventory`
+
+      Also write machine-usable attachment metadata to
+      `$ARTIFACTS_DIR/attachment-inventory.json` (array of objects with id/name/contentType/url/size when available).
+
+      Return STRICT JSON only:
+      {
+        "epic_context": "$ARTIFACTS_DIR/epic-context.md",
+        "attachment_inventory": "$ARTIFACTS_DIR/attachment-inventory.json"
+      }
+
+  - id: fetch-attachment-content
+    depends_on: [ fetch-epic-ticket ]
+    context: fresh
+    mcp: /home/user/Archon/.archon/mcp/atlassian.json
+    prompt: |
+      You are collecting attachment content for decomposition planning.
+      Use Atlassian MCP tools only.
+
+      Inputs (read from artifacts):
+      - `$ARTIFACTS_DIR/trigger-payload.json`
+      - `$ARTIFACTS_DIR/epic-context.md`
+      - `$ARTIFACTS_DIR/attachment-inventory.json`
+
+      Task:
+      1) Parse the attachment inventory from artifact JSON.
+      2) For each attachment, fetch and read its content when text is retrievable via available tools.
+      3) If an attachment is binary or inaccessible, include a short reason and any metadata that helps downstream planning.
+      4) Keep each attachment's extracted content in its own subsection.
+
+      Write markdown to `$ARTIFACTS_DIR/attachments.md` with sections:
+      - `# Attachment Content`
+      - `## Retrieved Attachments`
+      - `## Unretrieved Attachments`
+      - `## Planning Notes From Attachments`
+
+      Return STRICT JSON only:
+      {
+        "attachments": "$ARTIFACTS_DIR/attachments.md"
+      }
+
+  - id: build-decomposition-plan-json
+    depends_on: [ fetch-attachment-content ]
+    prompt: |
+      Build a task decomposition plan for this Epic.
+
+      Inputs (read from artifacts):
+      - `$ARTIFACTS_DIR/trigger-payload.json`
+      - `$ARTIFACTS_DIR/epic-context.md`
+      - `$ARTIFACTS_DIR/attachments.md`
+
+      Build plan JSON in this shape:
+      {
+        "epic_key": "string",
+        "epic_title": "string",
+        "planning_assumptions": ["string"],
+        "dependency_graph_notes": "string",
+        "tasks": [
+          {
+            "task_id": "T1",
+            "title": "string",
+            "summary": "string",
+            "acceptance_criteria": ["string"],
+            "depends_on": ["T#"],
+            "suggested_jira_type": "Task"
+          }
+        ]
+      }
+
+      Rules:
+      - Include all required implementation tasks, not just coding.
+      - Ensure `depends_on` creates a valid DAG.
+      - Prefer small, independently executable tasks.
+      - Task IDs must be stable labels like T1, T2, T3...
+
+      Write the final JSON to `$ARTIFACTS_DIR/decomposition-plan.json` (pretty JSON).
+
+      Return STRICT JSON only:
+      {
+        "plan_json": "$ARTIFACTS_DIR/decomposition-plan.json"
+      }
+
+  - id: build-decomposition-plan-md
+    depends_on: [ build-decomposition-plan-json ]
+    prompt: |
+      Convert the decomposition plan into readable markdown for humans.
+
+      Inputs (read from artifacts):
+      - `$ARTIFACTS_DIR/trigger-payload.json`
+      - `$ARTIFACTS_DIR/epic-context.md`
+      - `$ARTIFACTS_DIR/attachments.md`
+      - `$ARTIFACTS_DIR/decomposition-plan.json`
+
+      Write markdown to `$ARTIFACTS_DIR/decomposition-plan.md` with sections:
+      - `# Epic Decomposition Plan`
+      - `## Proposed Task Graph`
+      - `## Task Breakdown`
+      - `## Risks and Unknowns`
+      - `## Suggested Execution Order`
+
+      Return STRICT JSON only:
+      {
+        "plan_markdown": "$ARTIFACTS_DIR/decomposition-plan.md"
+      }
+
+  - id: attach-plan-to-epic
+    depends_on: [ build-decomposition-plan-md ]
+    context: fresh
+    mcp: /home/user/Archon/.archon/mcp/atlassian.json
+    prompt: |
+      You are attaching decomposition artifacts back to Jira.
+      Use Atlassian MCP tools only.
+
+      Inputs (read from artifacts):
+      - `$ARTIFACTS_DIR/trigger-payload.json`
+      - `$ARTIFACTS_DIR/decomposition-plan.md`
+
+      Do exactly these steps:
+      1) Read the Epic key from `$ARTIFACTS_DIR/trigger-payload.json`.
+      2) Upload `$ARTIFACTS_DIR/decomposition-plan.md` as an attachment on that Epic.
+      2) Verify the attachment is present on the Epic.
+      3) Add a Jira comment on the Epic with this exact text:
+         "Epic decomposition plan attached: decomposition-plan.md"
+
+      Preferred tool names (use exact names when available):
+      - Atlassian:fetch
+      - Atlassian:addAttachmentToJiraIssue
+      - Atlassian:addCommentToJiraIssue
+
+      If attachment/comment tool names differ in this MCP server, inspect available
+      Atlassian:* tools and use the equivalent Jira attachment/comment tools.
