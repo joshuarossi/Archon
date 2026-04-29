@@ -455,6 +455,7 @@ describe('JiraAdapter', () => {
       expect(router.event).toBe('comment_created');
       expect(router.issue_key).toBe('PROJ-1');
       expect(router.project).toBe('PROJ');
+      expect(router.codebase_cwd).toBe('/tmp/cwd');
       expect(router.issue_type).toBe('Task');
       expect(router.summary).toBe('Issue summary');
       expect(router.status).toBe('To Do');
@@ -472,6 +473,7 @@ describe('JiraAdapter', () => {
       const router = extractRouterPayload(handleMessageCall().command);
       expect(router.event).toBe('created');
       expect(router.issue_key).toBe('PROJ-2');
+      expect(router.codebase_cwd).toBe('/tmp/cwd');
       expect(router.summary).toBe('A new bug');
       expect(router.issue_type).toBe('Bug');
       expect(router.comment_body).toBeUndefined();
@@ -487,6 +489,7 @@ describe('JiraAdapter', () => {
 
       const router = extractRouterPayload(handleMessageCall().command);
       expect(router.event).toBe('transition');
+      expect(router.codebase_cwd).toBe('/tmp/cwd');
       expect(router.from_status).toBe('To Do');
       expect(router.to_status).toBe('In Progress');
       expect(router.actor).toBe('User One');

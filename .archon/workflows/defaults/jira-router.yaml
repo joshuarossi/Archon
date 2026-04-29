@@ -2,7 +2,7 @@ name: jira-router
 description: Route Jira webhook events into placeholder SDLC handlers.
 
 worktree:
-  enabled: true
+  enabled: false
 
 nodes:
   - id: decode
@@ -17,383 +17,66 @@ nodes:
         const obj = JSON.parse(json);
         process.stdout.write(JSON.stringify(obj));
       ' -- "$ARGUMENTS"
-
-  - id: epic-decompose-placeholder
+  - id: route-epic-decompose
     depends_on: [ decode ]
+    timeout: 900000
     when: "$decode.output.event == 'transition' && $decode.output.issue_type ==
       'Epic' && $decode.output.from_status == 'Backlog' &&
       $decode.output.to_status == 'Selected for Development'"
-    context: fresh
-    mcp: /home/user/Archon/.archon/mcp/atlassian.json
-    prompt: |
-      You are the Jira decomposition placeholder handler.
-      Use Atlassian MCP tools explicitly.
+    bash: |
+      set -euo pipefail
+      target_cwd=$decode.output.codebase_cwd
+      if [ -z "$target_cwd" ] || [ "$target_cwd" = "null" ]; then
+        target_cwd="$PWD"
+      fi
+      encoded_payload="$(printf '%s' $decode.output | base64 -w0)"
+      mkdir -p "$ARTIFACTS_DIR/router-dispatch-logs"
+      dispatch_log="$ARTIFACTS_DIR/router-dispatch-logs/epic-decompose.log"
+      nohup archon workflow run epic-decompose \
+        --cwd "$target_cwd" \
+        --branch "epic-decompose-$WORKFLOW_ID" \
+        "$encoded_payload" \
+        >"$dispatch_log" 2>&1 < /dev/null &
+      printf '{"dispatched":"true","workflow":"epic-decompose","log":"%s","pid":"%s"}' "$dispatch_log" "$!"
 
-      Preferred tool names (use these exact names when available):
-      - Atlassian:search
-      - Atlassian:fetch
-      - Atlassian:createJiraIssue
-      - Atlassian:addCommentToJiraIssue
-      - Atlassian:addWorklogToJiraIssue
-
-      If create/comment tool names differ in this MCP server, first inspect available
-      Atlassian:* tools and then use the equivalent Jira issue create/comment tools.
-
-      Trigger payload:
-      $decode.output
-
-      Do exactly these steps:
-
-      1) Read Epic `$decode.output.issue_key` and gather enough context to create child work.
-      2) Create exactly ONE new Jira issue of type Task that is a child of Epic `$decode.output.issue_key`.
-         - Keep it clearly marked as placeholder work.
-         - Include a short acceptance-criteria list.
-      3) Add a Jira comment on the NEW Task with this exact text:
-         "Placeholder: decomposition created this task from Epic $decode.output.issue_key."
-      4) Add a Jira comment on Epic `$decode.output.issue_key` saying decomposition placeholder ran,
-         including the created Task key.
-      5) Verify all of the following before finishing:
-         - The created issue is type Task
-         - The created issue is linked/parented under Epic `$decode.output.issue_key`
-         - The created issue contains the placeholder comment from step 3
-         Then post a final verification comment on the Epic with PASS/FAIL for each check.
-
-      If any action fails, still post a Jira comment on the Epic describing the failure.
-
-  - id: task-tests-placeholder
+  - id: route-task-tests
     depends_on: [ decode ]
+    timeout: 900000
     when: "$decode.output.event == 'created' && $decode.output.issue_type == 'Task'
       && $decode.output.status == 'Backlog'"
-    context: fresh
-    mcp: /home/user/Archon/.archon/mcp/atlassian.json
-    prompt: |
-      You are the Jira test-creation placeholder handler.
-      Use Atlassian MCP tools explicitly.
+    bash: |
+      set -euo pipefail
+      target_cwd=$decode.output.codebase_cwd
+      if [ -z "$target_cwd" ] || [ "$target_cwd" = "null" ]; then
+        target_cwd="$PWD"
+      fi
+      encoded_payload="$(printf '%s' $decode.output | base64 -w0)"
+      mkdir -p "$ARTIFACTS_DIR/router-dispatch-logs"
+      dispatch_log="$ARTIFACTS_DIR/router-dispatch-logs/task-tests-placeholder.log"
+      nohup archon workflow run task-tests-placeholder \
+        --cwd "$target_cwd" \
+        --branch "task-tests-$WORKFLOW_ID" \
+        "$encoded_payload" \
+        >"$dispatch_log" 2>&1 < /dev/null &
+      printf '{"dispatched":"true","workflow":"task-tests-placeholder","log":"%s","pid":"%s"}' "$dispatch_log" "$!"
 
-      Preferred tool names (use these exact names when available):
-      - Atlassian:fetch
-      - Atlassian:transitionJiraIssue
-      - Atlassian:addCommentToJiraIssue
-      - Atlassian:addWorklogToJiraIssue
-
-      If transition/comment tool names differ in this MCP server, first inspect available
-      Atlassian:* tools and then use the equivalent Jira transition/comment tools.
-
-      Trigger payload:
-      $decode.output
-
-      Do exactly these steps:
-
-      1) Transition the task from "Backlog" to "Selected for Development".
-      2) Add a Jira comment on Task `$decode.output.issue_key` with this exact message:
-         "Placeholder: created tests for this task."
-      3) Verify the comment is visible on the task and post a short confirmation comment.
-      4) Transition the task from "Selected for Development" to "In Progress".
-      5) Post a final short comment confirming both transitions completed.
-
-      Important:
-      - Keep this run focused on test placeholder + transitions only.
-      - The move to "In Progress" is intentional to trigger the next webhook-driven handler.
-
-  - id: task-implement-placeholder
+  - id: route-task-implement
     depends_on: [ decode ]
+    timeout: 900000
     when: "$decode.output.event == 'transition' && $decode.output.issue_type ==
       'Task' && $decode.output.to_status == 'In Progress'"
-    context: fresh
-    mcp: /home/user/Archon/.archon/mcp/atlassian.json
-    prompt: |
-      You are the Jira implementation placeholder handler.
-      Use Atlassian MCP tools explicitly.
-
-      Preferred tool names (use these exact names when available):
-      - Atlassian:fetch
-      - Atlassian:addCommentToJiraIssue
-      - Atlassian:addWorklogToJiraIssue
-
-      If comment tool names differ in this MCP server, first inspect available
-      Atlassian:* tools and then use the equivalent Jira comment/update tool.
-
-      Trigger payload:
-      $decode.output
-
-      Add a Jira comment on Task `$decode.output.issue_key` with this exact message:
-      "Placeholder: implementing this task now."
-      Then verify that the comment is visible on the task and include a second short
-      comment confirming verification result.
-
-  - id: task-test-gate-placeholder
-    depends_on: [ task-implement-placeholder ]
     bash: |
       set -euo pipefail
-      mkdir -p "$ARTIFACTS_DIR/test-results"
-      attempt_file="$ARTIFACTS_DIR/test-results/attempt.txt"
-      report_file="$ARTIFACTS_DIR/test-results/latest.txt"
-      attempt=0
-      if [ -f "$attempt_file" ]; then
-        attempt="$(cat "$attempt_file")"
+      target_cwd=$decode.output.codebase_cwd
+      if [ -z "$target_cwd" ] || [ "$target_cwd" = "null" ]; then
+        target_cwd="$PWD"
       fi
-      attempt=$((attempt + 1))
-      printf "%s" "$attempt" > "$attempt_file"
-
-      if [ "$attempt" -eq 1 ]; then
-        cat > "$report_file" <<'EOF'
-      SIMULATED TEST RESULT: FAIL
-      - placeholder-test-1 failed
-      - placeholder-test-2 failed
-      EOF
-        printf '{"pass":"false","attempt":"%s","report_path":"%s"}' "$attempt" "$report_file"
-      else
-        cat > "$report_file" <<'EOF'
-      SIMULATED TEST RESULT: PASS
-      - all placeholder tests passed
-      EOF
-        printf '{"pass":"true","attempt":"%s","report_path":"%s"}' "$attempt" "$report_file"
-      fi
-
-  - id: task-test-gate-comment-placeholder
-    depends_on: [ task-test-gate-placeholder ]
-    bash: |
-      set -euo pipefail
-      issue_key="$decode.output.issue_key"
-      attempt="$task-test-gate-placeholder.output.attempt"
-      pass="$task-test-gate-placeholder.output.pass"
-      dry_run="${JIRA_TOOL_DRY_RUN:-false}"
-
-      payload="$(ISSUE_KEY="$issue_key" ATTEMPT="$attempt" PASS="$pass" DRY_RUN="$dry_run" bun -e '
-        const issueKey = process.env.ISSUE_KEY ?? "";
-        const attempt = process.env.ATTEMPT ?? "";
-        const pass = process.env.PASS ?? "";
-        const dryRun = (process.env.DRY_RUN ?? "false").toLowerCase() === "true";
-        process.stdout.write(JSON.stringify({
-          action: "addComment",
-          issueKey,
-          text: `Placeholder: deterministic test gate attempt ${attempt} result pass=${pass}.`,
-          dryRun,
-        }));
-      ')"
-
-      script_path=".archon/scripts/jira-tool.js"
-      if [ ! -f "$script_path" ]; then
-        script_path="/home/user/Archon/.archon/scripts/jira-tool.js"
-      fi
-
-      bun "$script_path" "$payload"
-
-  - id: task-fix-retry-placeholder
-    depends_on: [ task-test-gate-placeholder ]
-    when: "$task-test-gate-placeholder.output.pass == 'false'"
-    context: fresh
-    mcp: /home/user/Archon/.archon/mcp/atlassian.json
-    allowed_tools: [ Read, Grep, Glob ]
-    prompt: |
-      You are the placeholder "dev fix" retry for Jira task `$decode.output.issue_key`.
-
-      Failure report path:
-      $task-test-gate-placeholder.output.report_path
-
-      Rules:
-      - Do not run tests yourself. The deterministic gate runs tests.
-      - Do not edit files under tests/.
-      - For this plumbing-only phase, do not edit source code either.
-      - Add one Jira comment on `$decode.output.issue_key` with this exact text:
-        "Placeholder: attempted fix based on failing test report."
-
-      Keep it short and finish.
-
-  - id: task-test-gate-retry-placeholder
-    depends_on: [ task-fix-retry-placeholder, task-test-gate-comment-placeholder ]
-    when: "$task-test-gate-placeholder.output.pass == 'false'"
-    bash: |
-      set -euo pipefail
-      mkdir -p "$ARTIFACTS_DIR/test-results"
-      attempt_file="$ARTIFACTS_DIR/test-results/attempt.txt"
-      report_file="$ARTIFACTS_DIR/test-results/latest.txt"
-      attempt=0
-      if [ -f "$attempt_file" ]; then
-        attempt="$(cat "$attempt_file")"
-      fi
-      attempt=$((attempt + 1))
-      printf "%s" "$attempt" > "$attempt_file"
-
-      if [ "$attempt" -lt 2 ]; then
-        cat > "$report_file" <<'EOF'
-      SIMULATED TEST RESULT: FAIL
-      - placeholder retry still failing
-      EOF
-        printf '{"pass":"false","attempt":"%s","report_path":"%s"}' "$attempt" "$report_file"
-      else
-        cat > "$report_file" <<'EOF'
-      SIMULATED TEST RESULT: PASS
-      - all placeholder tests passed after retry
-      EOF
-        printf '{"pass":"true","attempt":"%s","report_path":"%s"}' "$attempt" "$report_file"
-      fi
-
-  - id: task-test-gate-retry-comment-placeholder
-    depends_on: [ task-test-gate-retry-placeholder ]
-    when: "$task-test-gate-placeholder.output.pass == 'false'"
-    context: fresh
-    mcp: /home/user/Archon/.archon/mcp/atlassian.json
-    prompt: |
-      Add a Jira comment on Task `$decode.output.issue_key` with this exact text:
-      "Placeholder: deterministic test gate retry attempt $task-test-gate-retry-placeholder.output.attempt result pass=$task-test-gate-retry-placeholder.output.pass."
-
-  - id: open-pr-placeholder
-    depends_on: [ task-test-gate-placeholder, task-test-gate-retry-placeholder, task-test-gate-retry-comment-placeholder ]
-    trigger_rule: none_failed_min_one_success
-    when: "$task-test-gate-placeholder.output.pass == 'true' || $task-test-gate-retry-placeholder.output.pass == 'true'"
-    context: fresh
-    mcp: /home/user/Archon/.archon/mcp/atlassian.json
-    prompt: |
-      You are the PR-open placeholder for Jira task `$decode.output.issue_key`.
-
-      Do exactly this:
-      1) Add a Jira comment on `$decode.output.issue_key` with this exact text:
-         "Placeholder: opened PR for this task."
-      2) Add a second Jira comment with this exact text:
-         "Placeholder PR URL: https://example.com/pr/$decode.output.issue_key"
-
-  - id: pr-review-placeholder
-    depends_on: [ open-pr-placeholder ]
-    bash: |
-      set -euo pipefail
-      mkdir -p "$ARTIFACTS_DIR/review"
-      attempt_file="$ARTIFACTS_DIR/review/attempt.txt"
-      attempt=0
-      if [ -f "$attempt_file" ]; then
-        attempt="$(cat "$attempt_file")"
-      fi
-      attempt=$((attempt + 1))
-      printf "%s" "$attempt" > "$attempt_file"
-
-      if [ "$attempt" -eq 1 ]; then
-        printf '{"decision":"changes_requested","attempt":"%s"}' "$attempt"
-      else
-        printf '{"decision":"approved","attempt":"%s"}' "$attempt"
-      fi
-
-  - id: pr-review-comment-placeholder
-    depends_on: [ pr-review-placeholder ]
-    context: fresh
-    mcp: /home/user/Archon/.archon/mcp/atlassian.json
-    prompt: |
-      Add a Jira comment on Task `$decode.output.issue_key` with this exact text:
-      "Placeholder: PR review decision=$pr-review-placeholder.output.decision attempt=$pr-review-placeholder.output.attempt."
-
-  - id: pr-synthesis-placeholder
-    depends_on: [ pr-review-placeholder ]
-    bash: |
-      set -euo pipefail
-      # Placeholder fan-in node: today this passes through one reviewer decision.
-      # Later this will aggregate multiple reviewer outputs.
-      decision="$pr-review-placeholder.output.decision"
-      if [ -z "$decision" ] || [ "$decision" = "null" ]; then
-        decision="changes_requested"
-      fi
-      printf '{"decision":"%s","reviewer_count":"1"}' "$decision"
-
-  - id: pr-synthesis-comment-placeholder
-    depends_on: [ pr-synthesis-placeholder ]
-    context: fresh
-    mcp: /home/user/Archon/.archon/mcp/atlassian.json
-    prompt: |
-      Add a Jira comment on Task `$decode.output.issue_key` with this exact text:
-      "Placeholder: synthesis decision=$pr-synthesis-placeholder.output.decision reviewers=$pr-synthesis-placeholder.output.reviewer_count."
-
-  - id: pr-rework-placeholder
-    depends_on: [ pr-review-placeholder, pr-review-comment-placeholder, pr-synthesis-comment-placeholder ]
-    when: "$pr-review-placeholder.output.decision == 'changes_requested'"
-    context: fresh
-    mcp: /home/user/Archon/.archon/mcp/atlassian.json
-    allowed_tools: [ Read, Grep, Glob ]
-    prompt: |
-      You are the placeholder PR rework retry for `$decode.output.issue_key`.
-      Synthesis requested changes.
-
-      Do exactly this:
-      1) Add a Jira comment with this exact text:
-         "Placeholder: addressed PR review concerns."
-      2) Stop after the update.
-
-  - id: pr-review-retry-placeholder
-    depends_on: [ pr-rework-placeholder ]
-    when: "$pr-review-placeholder.output.decision == 'changes_requested'"
-    bash: |
-      set -euo pipefail
-      mkdir -p "$ARTIFACTS_DIR/review"
-      attempt_file="$ARTIFACTS_DIR/review/attempt.txt"
-      attempt=0
-      if [ -f "$attempt_file" ]; then
-        attempt="$(cat "$attempt_file")"
-      fi
-      attempt=$((attempt + 1))
-      printf "%s" "$attempt" > "$attempt_file"
-      if [ "$attempt" -lt 2 ]; then
-        printf '{"decision":"changes_requested","attempt":"%s"}' "$attempt"
-      else
-        printf '{"decision":"approved","attempt":"%s"}' "$attempt"
-      fi
-
-  - id: pr-review-retry-comment-placeholder
-    depends_on: [ pr-review-retry-placeholder ]
-    when: "$pr-review-placeholder.output.decision == 'changes_requested'"
-    context: fresh
-    mcp: /home/user/Archon/.archon/mcp/atlassian.json
-    prompt: |
-      Add a Jira comment on Task `$decode.output.issue_key` with this exact text:
-      "Placeholder: PR review retry decision=$pr-review-retry-placeholder.output.decision attempt=$pr-review-retry-placeholder.output.attempt."
-
-  - id: pr-approved
-    depends_on: [ pr-review-placeholder, pr-review-retry-placeholder ]
-    trigger_rule: none_failed_min_one_success
-    bash: |
-      set -euo pipefail
-      attempt_file="$ARTIFACTS_DIR/review/attempt.txt"
-      attempt="0"
-      if [ -f "$attempt_file" ]; then
-        attempt="$(cat "$attempt_file")"
-      fi
-      # Deterministic review loop: first review asks for changes, retry approves.
-      if [ "$attempt" -ge 2 ]; then
-        approved="true"
-      else
-        approved="false"
-      fi
-      printf '{"approved":"%s"}' "$approved"
-
-  - id: pr-approved-comment
-    depends_on: [ pr-approved, pr-review-retry-comment-placeholder ]
-    trigger_rule: none_failed_min_one_success
-    context: fresh
-    mcp: /home/user/Archon/.archon/mcp/atlassian.json
-    prompt: |
-      Add a Jira comment on Task `$decode.output.issue_key` with this exact text:
-      "Placeholder: PR approval gate approved=$pr-approved.output.approved."
-
-  - id: merge-pr-placeholder
-    depends_on: [ pr-approved, pr-approved-comment ]
-    when: "$pr-approved.output.approved == 'true'"
-    context: fresh
-    mcp: /home/user/Archon/.archon/mcp/atlassian.json
-    prompt: |
-      You are the merge placeholder for Jira task `$decode.output.issue_key`.
-      Add a Jira comment with this exact text:
-      "Placeholder: PR merged for this task."
-
-  - id: task-done-placeholder
-    depends_on: [ merge-pr-placeholder ]
-    context: fresh
-    mcp: /home/user/Archon/.archon/mcp/atlassian.json
-    prompt: |
-      You are the finalization placeholder for Jira task `$decode.output.issue_key`.
-      Use Atlassian MCP tools explicitly.
-
-      Preferred tool names:
-      - Atlassian:transitionJiraIssue
-      - Atlassian:addCommentToJiraIssue
-
-      Do exactly these steps:
-      1) Transition `$decode.output.issue_key` to "Done".
-      2) Add a Jira comment with this exact text:
-         "Placeholder: task moved to Done after merge."
-      3) Verify the status is Done and add a short verification comment.
+      encoded_payload="$(printf '%s' $decode.output | base64 -w0)"
+      mkdir -p "$ARTIFACTS_DIR/router-dispatch-logs"
+      dispatch_log="$ARTIFACTS_DIR/router-dispatch-logs/task-implement-placeholder.log"
+      nohup archon workflow run task-implement-placeholder \
+        --cwd "$target_cwd" \
+        --branch "task-implement-$WORKFLOW_ID" \
+        "$encoded_payload" \
+        >"$dispatch_log" 2>&1 < /dev/null &
+      printf '{"dispatched":"true","workflow":"task-implement-placeholder","log":"%s","pid":"%s"}' "$dispatch_log" "$!"

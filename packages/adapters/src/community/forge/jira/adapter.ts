@@ -138,6 +138,8 @@ interface RouterEventPayload {
   event: 'comment_created' | 'created' | 'transition' | 'content_changed';
   issue_key: string;
   project: string;
+  /** Absolute path to the mapped Archon codebase default cwd. */
+  codebase_cwd: string;
   issue_type?: string;
   summary: string;
   status?: string;
@@ -518,12 +520,17 @@ export class JiraAdapter implements IPlatformAdapter {
    * omitted (via JSON.stringify), giving the router a clean, predictable
    * surface to match on.
    */
-  private composeRouterPayload(parsed: ParsedEvent, projectKey: string): RouterEventPayload {
+  private composeRouterPayload(
+    parsed: ParsedEvent,
+    projectKey: string,
+    codebaseCwd: string
+  ): RouterEventPayload {
     const issue = parsed.issue;
     const base: RouterEventPayload = {
       event: parsed.kind,
       issue_key: issue.key,
       project: projectKey,
+      codebase_cwd: codebaseCwd,
       issue_type: issue.fields.issuetype?.name,
       summary: issue.fields.summary,
       status: issue.fields.status?.name,
@@ -768,7 +775,7 @@ Reporter: ${reporter}`;
       }
 
       // 8. Compose router payload and synthesize the slash command.
-      const routerPayload = this.composeRouterPayload(parsed, projectKey);
+      const routerPayload = this.composeRouterPayload(parsed, projectKey, codebase.default_cwd);
       const command = this.buildRouterCommand(routerPayload);
       const issueContext = this.buildIssueContext(parsed.issue);
       const isolationWorkflowId = this.buildIsolationWorkflowId(parsed);
