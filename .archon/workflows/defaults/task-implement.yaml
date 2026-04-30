@@ -559,20 +559,25 @@ nodes:
   # all_done + when clause keeps it from running because validation didn't
   # succeed — neither path is satisfied.
   - id: merge-pr
-    depends_on: [ parse-synthesis, implement-fixes, post-fix-validation ]
+    depends_on: [ open-pr, parse-synthesis, implement-fixes, post-fix-validation ]
     trigger_rule: all_done
-    # Archon's condition evaluator does not support parentheses (see
-    # condition-evaluator.ts: "AND has higher precedence than OR. No
-    # parentheses."). The two-path gate is expressed via that precedence:
-    # `approve` OR (`changes_requested` AND `passed='true'`). With && bound
-    # tighter than ||, the unparenthesized form below evaluates identically.
+    # AND binds tighter than ||, so the gate reads as:
+    #   synth approved  OR  (synth requested changes AND post-fix passed)
+    # The bash itself guards against open-pr having been skipped (no
+    # pr-info.json on disk) — keeping that check in the consumer rather
+    # than the gate avoids duplicating `$open-pr.output.pr_number != ''`
+    # in every OR branch (Archon's condition evaluator has no parentheses).
     when: "$parse-synthesis.output.decision == 'approve' ||
       $parse-synthesis.output.decision == 'changes_requested' &&
       $post-fix-validation.output.passed == 'true'"
     bash: |
       # Squash-merge the PR, delete the branch, post Jira confirmation.
       set -euo pipefail
-      export ARTIFACTS_DIR="$ARTIFACTS_DIR"
+      if [ ! -f "$ARTIFACTS_DIR/pr-info.json" ]; then
+        echo "No pr-info.json on disk — open-pr did not run, nothing to merge." >&2
+        printf '{"merged":"false","reason":"no_pr"}'
+        exit 0
+      fi
       bun /home/user/Archon/.archon/scripts/task-merge-pr.ts
 
   - id: transition-to-done
