@@ -432,10 +432,20 @@ nodes:
   # Uses the existing Archon synthesizer command; reads all *-findings.md
   # files, decides APPROVE/REQUEST_CHANGES based on severity thresholds,
   # posts a master review comment to the PR.
+  #
+  # trigger_rule: all_done — synthesize must read ALL five reviewers'
+  # artifacts, so it waits for every reviewer to settle. We use all_done
+  # rather than all_success / none_failed_min_one_success because a
+  # crashed individual reviewer shouldn't block the chain — the synth
+  # command handles missing findings files internally and produces a
+  # partial review from whatever DID land. The earlier `one_success`
+  # would have let synthesize fire while some reviewers were still
+  # running — only safe by accident because all five tend to complete
+  # within seconds of each other.
   - id: synthesize
     command: archon-synthesize-review
     depends_on: [ review-scope, review-code, review-error-handling, review-docs, review-comment-quality ]
-    trigger_rule: one_success
+    trigger_rule: all_done
     context: fresh
 
   # ─── Parse the synthesizer's verdict into a JSON decision field ──
