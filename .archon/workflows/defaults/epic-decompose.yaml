@@ -1,5 +1,5 @@
 name: epic-decompose
-description: Decompose an Epic into Tasks with dependency planning.
+description: Decompose an Epic into Tasks with dependency planning. Script-driven Jira plumbing; agent-driven planning + per-task authoring.
 
 worktree:
   enabled: true
@@ -7,7 +7,11 @@ worktree:
 nodes:
   - id: decode
     bash: |
+      # Decode the base64-encoded webhook payload from $ARGUMENTS into JSON for downstream nodes.
+      # Also capture the workflow start time for end-of-run worklog reporting.
       set -euo pipefail
+      mkdir -p "$ARTIFACTS_DIR"
+      date +%s%3N > "$ARTIFACTS_DIR/.workflow-start-ms"
       bun -e '
         const raw = process.argv[1];
         if (!raw) {
@@ -23,102 +27,56 @@ nodes:
         process.stdout.write(JSON.stringify(obj));
       ' -- "$ARGUMENTS"
 
+  # --- Plumbing: write the trigger payload to disk for downstream nodes ---
   - id: write-trigger-artifact
     depends_on: [ decode ]
-    prompt: |
-      Persist the webhook payload as the first handoff artifact.
+    bash: |
+      # Persist the decoded webhook payload as $ARTIFACTS_DIR/trigger-payload.json.
+      set -euo pipefail
+      mkdir -p "$ARTIFACTS_DIR"
+      out="$ARTIFACTS_DIR/trigger-payload.json"
+      echo "Writing decoded webhook payload to $out..."
+      printf '%s' $decode.output | bun -e '
+        import { writeFileSync, readFileSync } from "node:fs";
+        const obj = JSON.parse(readFileSync(0, "utf8"));
+        writeFileSync(process.argv[1], JSON.stringify(obj, null, 2));
+      ' -- "$out"
+      echo "Trigger payload persisted ($(wc -c < "$out") bytes)."
+      printf '\n{"trigger_payload":"%s"}' "$out"
 
-      Input payload JSON:
-      $decode.output
-
-      Write the payload to `$ARTIFACTS_DIR/trigger-payload.json` as pretty JSON.
-
-      Return STRICT JSON only:
-      {
-        "trigger_payload": "$ARTIFACTS_DIR/trigger-payload.json"
-      }
-
+  # --- Plumbing: fetch the Epic from Jira via REST, write epic-context.md + attachment-inventory.json ---
   - id: fetch-epic-ticket
     depends_on: [ write-trigger-artifact ]
-    context: fresh
-    mcp: /home/user/Archon/.archon/mcp/atlassian.json
-    prompt: |
-      You are gathering Jira Epic context for decomposition planning.
-      Use Atlassian MCP tools only.
+    bash: |
+      # Fetch the Epic from Jira (REST) and write epic-context.md + attachment-inventory.json.
+      set -euo pipefail
+      export ARTIFACTS_DIR="$ARTIFACTS_DIR"
+      bun /home/user/Archon/.archon/scripts/jira-fetch-epic.ts
 
-      Read `$ARTIFACTS_DIR/trigger-payload.json` first.
-      Use its `issue_key` as the Epic key.
-
-      Do these steps:
-      1) Fetch the full Epic issue details, including long-form description and any linked issue metadata that clarifies scope.
-      2) Extract a clean summary that includes:
-         - Epic key/title/current status
-         - full description content (expanded, not abbreviated)
-         - explicit goals/outcomes/constraints
-         - any acceptance criteria and open questions
-      3) Include a machine-usable list of attachment metadata found on the Epic:
-         - attachment id (if available)
-         - filename
-         - media/content type
-         - download URL
-         - size (if available)
-
-      Write markdown to `$ARTIFACTS_DIR/epic-context.md` with sections:
-      - `# Epic Context`
-      - `## Scope Summary`
-      - `## Full Description`
-      - `## Attachment Inventory`
-
-      Also write machine-usable attachment metadata to
-      `$ARTIFACTS_DIR/attachment-inventory.json` (array of objects with id/name/contentType/url/size when available).
-
-      Return STRICT JSON only:
-      {
-        "epic_context": "$ARTIFACTS_DIR/epic-context.md",
-        "attachment_inventory": "$ARTIFACTS_DIR/attachment-inventory.json"
-      }
-
+  # --- Plumbing: download all attachments via REST, build attachments.md ---
   - id: fetch-attachment-content
     depends_on: [ fetch-epic-ticket ]
-    context: fresh
-    mcp: /home/user/Archon/.archon/mcp/atlassian.json
-    prompt: |
-      You are collecting attachment content for decomposition planning.
-      Use Atlassian MCP tools only.
+    bash: |
+      # Download every Epic attachment (TechSpec, DesignDoc, etc.) and concatenate text into attachments.md.
+      set -euo pipefail
+      export ARTIFACTS_DIR="$ARTIFACTS_DIR"
+      bun /home/user/Archon/.archon/scripts/jira-fetch-attachments.ts
 
-      Inputs (read from artifacts):
-      - `$ARTIFACTS_DIR/trigger-payload.json`
-      - `$ARTIFACTS_DIR/epic-context.md`
-      - `$ARTIFACTS_DIR/attachment-inventory.json`
-
-      Task:
-      1) Parse the attachment inventory from artifact JSON.
-      2) For each attachment, fetch and read its content when text is retrievable via available tools.
-      3) If an attachment is binary or inaccessible, include a short reason and any metadata that helps downstream planning.
-      4) Keep each attachment's extracted content in its own subsection.
-
-      Write markdown to `$ARTIFACTS_DIR/attachments.md` with sections:
-      - `# Attachment Content`
-      - `## Retrieved Attachments`
-      - `## Unretrieved Attachments`
-      - `## Planning Notes From Attachments`
-
-      Return STRICT JSON only:
-      {
-        "attachments": "$ARTIFACTS_DIR/attachments.md"
-      }
-
+  # --- Authoring: agent reads context + attachments, produces decomposition-plan.json ---
   - id: build-decomposition-plan-json
     depends_on: [ fetch-attachment-content ]
     prompt: |
       Build a task decomposition plan for this Epic.
 
       Inputs (read from artifacts):
-      - `$ARTIFACTS_DIR/trigger-payload.json`
-      - `$ARTIFACTS_DIR/epic-context.md`
-      - `$ARTIFACTS_DIR/attachments.md`
+      - `$ARTIFACTS_DIR/trigger-payload.json` — Epic key + project.
+      - `$ARTIFACTS_DIR/epic-context.md` — Epic summary + full description.
+      - `$ARTIFACTS_DIR/attachments.md` — Concatenated text content of every
+        retrievable attachment (TechSpec, DesignDoc, style guide, etc.).
+      - `$ARTIFACTS_DIR/attachment-inventory.json` — Machine-readable
+        attachment list.
 
-      Build plan JSON in this shape:
+      Build a plan in this exact JSON shape:
       {
         "epic_key": "string",
         "epic_title": "string",
@@ -131,70 +89,267 @@ nodes:
             "summary": "string",
             "acceptance_criteria": ["string"],
             "depends_on": ["T#"],
-            "suggested_jira_type": "Task"
+            "suggested_jira_type": "Task",
+            "original_estimate_minutes": 60
           }
         ]
       }
 
       Rules:
-      - Include all required implementation tasks, not just coding.
-      - Ensure `depends_on` creates a valid DAG.
-      - Prefer small, independently executable tasks.
-      - Task IDs must be stable labels like T1, T2, T3...
+      - Decompose the Epic into the SMALLEST tasks that are independently
+        executable. Prefer many small tasks over few large ones.
+      - Cover every implementation domain mentioned in the source
+        material (PRD, TechSpec, DesignDoc): scaffolding, schema, auth,
+        each user-facing feature, accessibility, error states, tests.
+      - `depends_on` MUST form a valid DAG. The first task should be
+        scaffolding/setup with empty `depends_on`. Most other tasks
+        should declare at least one blocker.
+      - Task IDs are stable labels: T1, T2, T3, ... in plan order.
+      - `suggested_jira_type` must be one of: Task, Story, Bug.
+      - `acceptance_criteria` should be testable, concrete, and
+        traceable back to the source PRD/spec.
+      - `original_estimate_minutes` is your good-faith estimate of how long
+        an autonomous agent will spend on this task end-to-end (test
+        generation + implementation + review + merge). Calibration:
+          * Trivial scaffolding/config: 15-30
+          * One small CRUD endpoint or simple UI component: 30-60
+          * One AC-rich feature with non-trivial logic or AI integration: 60-120
+          * Cross-cutting concerns (privacy filter, accessibility pass): 120-240
+          * Heavy E2E test suite: 60-120
+        Estimates feed Jira's time-tracking reports — they are the visible
+        record of how this autonomous system is allocating effort. Be
+        thoughtful, not generic.
 
-      Write the final JSON to `$ARTIFACTS_DIR/decomposition-plan.json` (pretty JSON).
+      Write the final JSON to `$ARTIFACTS_DIR/decomposition-plan.json`
+      (pretty JSON, 2-space indent).
 
-      Return STRICT JSON only:
-      {
-        "plan_json": "$ARTIFACTS_DIR/decomposition-plan.json"
-      }
+      AFTER WRITING, verify the file is on disk: run `ls -la
+      $ARTIFACTS_DIR/decomposition-plan.json` via the Bash tool and
+      confirm the size is non-zero. Do NOT return until this check passes.
 
+      Narrate as you go: explain what you are reading, what assumptions
+      you are making, what the major decomposition decisions are, and any
+      tricky tradeoffs. The user is watching and wants visibility into your
+      planning. Then return the STRICT JSON pointer below as the LAST line
+      of your response.
+
+      Return JSON pointer at the end:
+      { "plan_json": "$ARTIFACTS_DIR/decomposition-plan.json" }
+
+  # --- Plumbing: render plan JSON to plan markdown for human readability ---
   - id: build-decomposition-plan-md
     depends_on: [ build-decomposition-plan-json ]
-    prompt: |
-      Convert the decomposition plan into readable markdown for humans.
+    bash: |
+      # Deterministically render decomposition-plan.json as a human-readable markdown plan.
+      set -euo pipefail
+      export ARTIFACTS_DIR="$ARTIFACTS_DIR"
+      bun /home/user/Archon/.archon/scripts/jira-render-plan-md.ts
 
-      Inputs (read from artifacts):
-      - `$ARTIFACTS_DIR/trigger-payload.json`
-      - `$ARTIFACTS_DIR/epic-context.md`
-      - `$ARTIFACTS_DIR/attachments.md`
-      - `$ARTIFACTS_DIR/decomposition-plan.json`
-
-      Write markdown to `$ARTIFACTS_DIR/decomposition-plan.md` with sections:
-      - `# Epic Decomposition Plan`
-      - `## Proposed Task Graph`
-      - `## Task Breakdown`
-      - `## Risks and Unknowns`
-      - `## Suggested Execution Order`
-
-      Return STRICT JSON only:
-      {
-        "plan_markdown": "$ARTIFACTS_DIR/decomposition-plan.md"
-      }
-
+  # --- Plumbing: upload plan markdown to Epic + post confirmation comment ---
   - id: attach-plan-to-epic
     depends_on: [ build-decomposition-plan-md ]
-    context: fresh
-    mcp: /home/user/Archon/.archon/mcp/atlassian.json
-    prompt: |
-      You are attaching decomposition artifacts back to Jira.
-      Use Atlassian MCP tools only.
+    bash: |
+      # Upload decomposition-plan.md as a Jira attachment on the Epic and post a confirmation comment.
+      set -euo pipefail
+      export ARTIFACTS_DIR="$ARTIFACTS_DIR"
+      bun /home/user/Archon/.archon/scripts/jira-attach-plan.ts
 
-      Inputs (read from artifacts):
-      - `$ARTIFACTS_DIR/trigger-payload.json`
-      - `$ARTIFACTS_DIR/decomposition-plan.md`
+  # --- Plumbing: ensure keymap exists ---
+  - id: init-keymap
+    depends_on: [ attach-plan-to-epic ]
+    bash: |
+      # Initialize empty $ARTIFACTS_DIR/task-keymap.json if missing — keymap drives loop progress + downstream linking.
+      set -euo pipefail
+      keymap="$ARTIFACTS_DIR/task-keymap.json"
+      if [ ! -f "$keymap" ]; then
+        echo '{}' > "$keymap"
+        echo "Initialized empty keymap at $keymap. The process-tasks loop will populate it one entry per iteration."
+      else
+        existing_count=$(bun -e 'import { readFileSync } from "node:fs"; console.log(Object.keys(JSON.parse(readFileSync(process.argv[1], "utf8"))).length)' -- "$keymap")
+        echo "Found existing keymap at $keymap with $existing_count entries — workflow is resuming or being re-run."
+      fi
+      printf '\n{"keymap_path":"%s"}' "$keymap"
 
-      Do exactly these steps:
-      1) Read the Epic key from `$ARTIFACTS_DIR/trigger-payload.json`.
-      2) Upload `$ARTIFACTS_DIR/decomposition-plan.md` as an attachment on that Epic.
-      2) Verify the attachment is present on the Epic.
-      3) Add a Jira comment on the Epic with this exact text:
-         "Epic decomposition plan attached: decomposition-plan.md"
+  # --- Authoring: per-task ticket creation. Agent composes description, calls jira-tool createIssue. ---
+  - id: process-tasks
+    depends_on: [ init-keymap ]
+    loop:
+      # 100 covers any realistic Epic. Plans typically run 30-60 tasks; the cap is a
+      # runaway-loop safety, not a planned upper bound. If a future Epic ever exceeds
+      # this, raise it or split the Epic into multiple decompositions.
+      max_iterations: 100
+      fresh_context: true
+      until: COMPLETE
+      prompt: |
+        You are creating Jira Tasks under an Epic, one per iteration.
+        Each iteration runs in a FRESH session with no memory of previous iterations.
+        State lives on disk; read it before acting.
 
-      Preferred tool names (use exact names when available):
-      - Atlassian:fetch
-      - Atlassian:addAttachmentToJiraIssue
-      - Atlassian:addCommentToJiraIssue
+        Inputs (read these every iteration):
+        - `$ARTIFACTS_DIR/trigger-payload.json` — has `issue_key` (Epic key), `project`.
+        - `$ARTIFACTS_DIR/decomposition-plan.json` — has `tasks[]` with `task_id`,
+          `title`, `summary`, `acceptance_criteria[]`, `depends_on[]`,
+          `suggested_jira_type`.
+        - `$ARTIFACTS_DIR/epic-context.md` and `$ARTIFACTS_DIR/attachments.md` —
+          source material from the Epic. Use to enrich descriptions where helpful.
+        - `$ARTIFACTS_DIR/task-keymap.json` — map of `task_id` → Jira issue key
+          for tasks already created. Empty `{}` on first iteration.
 
-      If attachment/comment tool names differ in this MCP server, inspect available
-      Atlassian:* tools and use the equivalent Jira attachment/comment tools.
+        Steps for THIS iteration:
+
+        1. Read the keymap. Read the plan. Find the FIRST task in plan order
+           whose `task_id` is NOT a key in the keymap. Call it T.
+
+        2. If every task in the plan already has a keymap entry, output
+           `<promise>COMPLETE</promise>` and stop. Do nothing else.
+
+        3. Compose the Jira description for T as markdown. Use this structure:
+           - One opening paragraph (2-4 sentences) restating T's purpose in
+             plain language, grounded in the Epic context. Not a verbatim copy
+             of T.summary; explain why this task exists.
+           - `## Acceptance Criteria` — bulleted list of T.acceptance_criteria.
+           - `## Implementation Notes` — anything from the Epic context or
+             attachments (TechSpec, DesignDoc) that the test-gen agent or
+             implementer should know. Mention the relevant tech stack, file
+             areas, or design constraints discoverable from the source
+             material. Keep it specific and short.
+           - `## Test-Gen Brief` — translate the acceptance criteria into a
+             testing approach. Per-AC: what kind of test (unit, integration,
+             E2E), what to assert, what fixtures are needed. Be concrete.
+           - `## Traceability` — one line: "Decomposed from Epic
+             `<epic_key>` plan task_id `<T.task_id>`." Then if `depends_on`
+             is non-empty, list the plan task_ids it depends on (NOT Jira
+             keys — those will become Blocks links in a later step).
+
+        4. Create the Jira issue. Use TWO files — markdown body in its own
+           `.md` file, JSON request that references it. This keeps the
+           markdown clean (no JSON-string escaping of newlines / backticks /
+           quotes).
+
+           a. Ensure the temp directory exists:
+                  mkdir -p "$ARTIFACTS_DIR/.tmp"
+           b. Use the Write tool to write the composed markdown body
+              (the prose from step 3) to
+              `$ARTIFACTS_DIR/.tmp/<T.task_id>-description.md`.
+              Write the markdown verbatim — no JSON, no escaping, just the
+              markdown. Headings, paragraphs, bullets, code blocks all OK.
+           c. Use the Write tool to write the request JSON to
+              `$ARTIFACTS_DIR/.tmp/jira-create.json`. Single-line JSON is
+              fine here because there is no multi-line content in the JSON:
+
+              {
+                "action": "createIssue",
+                "project": "<project key from trigger-payload.json>",
+                "summary": "<T.title>",
+                "issuetype": "<T.suggested_jira_type>",
+                "parentKey": "<Epic key from trigger-payload.json>",
+                "descriptionMarkdownFile": "<absolute path to the .md file from step 4b>",
+                "labels": ["archon-blocked-pending"],
+                "originalEstimateMinutes": <T.original_estimate_minutes>
+              }
+
+           d. Run the tool with the input file path in the env var:
+                  JIRA_TOOL_INPUT_FILE=$ARTIFACTS_DIR/.tmp/jira-create.json \
+                    bun /home/user/Archon/.archon/scripts/jira-tool.js
+           e. The script's stdout is JSON of shape
+              `{"ok": true, "action": "createIssue", "result": {"issueKey": "..."}}`.
+              Parse it. Capture `result.issueKey` — that is the new Jira key
+              for T.
+
+           If the script returns `{"ok": false, ...}` or exits non-zero,
+           stop the iteration with an error so the workflow surfaces it.
+           Do not silently retry.
+
+        5. Update the keymap. Read `$ARTIFACTS_DIR/task-keymap.json`, parse it,
+           add `{"<T.task_id>": "<new Jira key>"}`, write it back as pretty
+           JSON (2-space indent). Read-modify-write atomically.
+
+           AFTER WRITING, verify the keymap is on disk: run
+           `cat $ARTIFACTS_DIR/task-keymap.json` via the Bash tool and
+           confirm the new entry is present. Downstream nodes depend on
+           this file existing.
+
+        6. Add a confirmation comment on the new Jira issue. Same file-input
+           pattern:
+
+           a. Write to `$ARTIFACTS_DIR/.tmp/jira-comment.json`:
+
+              {
+                "action": "addComment",
+                "issueKey": "<new Jira key>",
+                "text": "Created from Epic <epic_key> decomposition, plan task_id <T.task_id>. Currently labeled archon-blocked-pending; will be unblocked once dependency links are in place."
+              }
+
+           b. Run:
+                  JIRA_TOOL_INPUT_FILE=$ARTIFACTS_DIR/.tmp/jira-comment.json \
+                    bun /home/user/Archon/.archon/scripts/jira-tool.js
+
+        7. Output a one-line status: `Created <T.task_id> as <Jira key>.`
+           Do NOT output `<promise>COMPLETE</promise>` on this iteration —
+           you have only created one task, and the loop should run again.
+
+        Hard rules:
+        - Create exactly ONE Jira issue per iteration. Never two.
+        - Never invent task_ids that aren't in the plan.
+        - Never modify decomposition-plan.json.
+        - Never strip the `archon-blocked-pending` label here; later nodes do that.
+
+        Narrate as you go. Tell the user:
+          - which task_id you picked and its title
+          - a one-sentence preview of the description you composed
+          - the Jira key the API returned
+          - confirmation that the keymap was updated
+          - confirmation that the comment was posted
+        The user is watching live and wants visibility into each iteration.
+        End the iteration with the one-line status from step 7 (or with
+        `<promise>COMPLETE</promise>` if step 2 short-circuits).
+
+        Previous iteration output (empty on first):
+        $LOOP_PREV_OUTPUT
+
+  # --- Plumbing: create Blocks links between dependent and blocker tasks ---
+  - id: create-blocks-links
+    depends_on: [ process-tasks ]
+    bash: |
+      # Walk the plan's depends_on graph and create Jira Blocks links between created tasks.
+      set -euo pipefail
+      export ARTIFACTS_DIR="$ARTIFACTS_DIR"
+      bun /home/user/Archon/.archon/scripts/jira-create-blocks-links.ts
+
+  # --- Plumbing: strip label and transition root tasks (no blockers) to Selected for Development ---
+  - id: unblock-roots
+    depends_on: [ create-blocks-links ]
+    bash: |
+      # For tasks with no declared blockers: remove archon-blocked-pending label and transition to Selected for Development.
+      set -euo pipefail
+      export ARTIFACTS_DIR="$ARTIFACTS_DIR"
+      bun /home/user/Archon/.archon/scripts/jira-unblock-roots.ts
+
+  # --- Plumbing: strip label from non-root tasks (they remain in Backlog awaiting their blockers) ---
+  - id: unstick-rest
+    depends_on: [ unblock-roots ]
+    bash: |
+      # For tasks with declared blockers: remove archon-blocked-pending label only (stay in Backlog until blockers Done).
+      set -euo pipefail
+      export ARTIFACTS_DIR="$ARTIFACTS_DIR"
+      bun /home/user/Archon/.archon/scripts/jira-unstick-rest.ts
+
+  # --- Plumbing: post final summary comment on Epic ---
+  - id: final-comment
+    depends_on: [ unstick-rest ]
+    bash: |
+      # Post a final summary comment on the Epic: tasks created, links made, roots transitioned.
+      set -euo pipefail
+      export ARTIFACTS_DIR="$ARTIFACTS_DIR"
+      bun /home/user/Archon/.archon/scripts/jira-final-comment.ts
+
+  # --- Plumbing: log total workflow elapsed time as a worklog on the Epic ---
+  - id: log-elapsed-on-epic
+    depends_on: [ final-comment ]
+    bash: |
+      # Compute the workflow's total elapsed time and log it to the Epic via Jira worklog.
+      # Feeds Jira's standard time-tracking reports so autonomous effort is visible alongside human work.
+      set -euo pipefail
+      export ARTIFACTS_DIR="$ARTIFACTS_DIR"
+      export WORKFLOW_NAME="epic-decompose"
+      bun /home/user/Archon/.archon/scripts/jira-log-elapsed.ts

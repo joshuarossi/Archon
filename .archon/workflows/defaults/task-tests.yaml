@@ -1,0 +1,273 @@
+name: task-tests
+description: Generate failing tests for a Jira task; commit and push them; transition to In Progress so the dev workflow can pick up.
+
+worktree:
+  enabled: true
+
+nodes:
+  - id: decode
+    bash: |
+      # Decode the base64 webhook payload into JSON; capture workflow start time for worklog reporting.
+      set -euo pipefail
+      mkdir -p "$ARTIFACTS_DIR"
+      date +%s%3N > "$ARTIFACTS_DIR/.workflow-start-ms"
+      bun -e '
+        const raw = process.argv[1];
+        if (!raw) {
+          throw new Error("Missing JSON payload input");
+        }
+        let obj;
+        try {
+          const decoded = Buffer.from(raw, "base64").toString("utf8");
+          obj = JSON.parse(decoded);
+        } catch {
+          obj = JSON.parse(raw);
+        }
+        process.stdout.write(JSON.stringify(obj));
+      ' -- "$ARGUMENTS"
+
+  - id: write-trigger-artifact
+    depends_on: [ decode ]
+    bash: |
+      # Persist the decoded webhook payload as $ARTIFACTS_DIR/trigger-payload.json.
+      set -euo pipefail
+      mkdir -p "$ARTIFACTS_DIR"
+      out="$ARTIFACTS_DIR/trigger-payload.json"
+      echo "Writing decoded webhook payload to $out..."
+      printf '%s' $decode.output | bun -e '
+        import { writeFileSync, readFileSync } from "node:fs";
+        const obj = JSON.parse(readFileSync(0, "utf8"));
+        writeFileSync(process.argv[1], JSON.stringify(obj, null, 2));
+      ' -- "$out"
+      echo "Trigger payload persisted ($(wc -c < "$out") bytes)."
+      printf '\n{"trigger_payload":"%s"}' "$out"
+
+  # Defensive: if a ticket still has the archon-blocked-pending label, the upstream
+  # decomposer didn't strip it — abort rather than start work on a still-blocked task.
+  - id: check-blocked-label
+    depends_on: [ write-trigger-artifact ]
+    bash: |
+      # Verify the task does NOT have archon-blocked-pending. If it does, halt.
+      set -euo pipefail
+      export ARTIFACTS_DIR="$ARTIFACTS_DIR"
+      issue_key=$decode.output.issue_key
+      input='{"action":"getIssue","issueKey":"'"$issue_key"'","fields":["labels"]}'
+      out="$(bun /home/user/Archon/.archon/scripts/jira-tool.js "$input")"
+      blocked=$(printf '%s' "$out" | bun -e '
+        import { readFileSync } from "node:fs";
+        const raw = readFileSync(0, "utf8");
+        const parsed = JSON.parse(raw);
+        if (!parsed.ok) { process.stderr.write(raw); process.exit(1); }
+        const labels = parsed.result.fields?.labels || [];
+        process.stdout.write(labels.includes("archon-blocked-pending") ? "true" : "false");
+      ')
+      if [ "$blocked" = "true" ]; then
+        echo "Task $issue_key still has archon-blocked-pending label — aborting test-gen."
+        exit 1
+      fi
+      echo "Task $issue_key is unblocked. Proceeding."
+      printf '\n{"blocked":"false","issue_key":"%s"}' "$issue_key"
+
+  - id: fetch-task-context
+    depends_on: [ check-blocked-label ]
+    bash: |
+      # Fetch the task from Jira and write task-context.md, parent-epic-key.txt, task.raw.json.
+      set -euo pipefail
+      export ARTIFACTS_DIR="$ARTIFACTS_DIR"
+      bun /home/user/Archon/.archon/scripts/jira-fetch-task-context.ts
+
+  - id: fetch-epic-tech-context
+    depends_on: [ fetch-task-context ]
+    bash: |
+      # Fetch the parent Epic's attachments (TechSpec, DesignDoc, etc.) so the test-gen agent can read them.
+      set -euo pipefail
+      export ARTIFACTS_DIR="$ARTIFACTS_DIR"
+      parent_key="$(cat "$ARTIFACTS_DIR/parent-epic-key.txt" 2>/dev/null || echo "")"
+      if [ -z "$parent_key" ]; then
+        echo "No parent Epic key found. Skipping tech context fetch (task has no parent or fetch failed)."
+        printf '\n{"skipped":"true","reason":"no parent epic"}'
+        exit 0
+      fi
+      echo "Fetching parent Epic $parent_key context (description + attachments)..."
+      # Re-use jira-fetch-epic.ts but with the parent key as the issue.
+      # The script reads trigger-payload.json's issue_key — write a temp one targeting the parent.
+      tmp_payload="$ARTIFACTS_DIR/.tmp/parent-trigger.json"
+      mkdir -p "$ARTIFACTS_DIR/.tmp"
+      printf '{"event":"transition","issue_key":"%s","project":"%s"}\n' \
+        "$parent_key" "$decode.output.project" > "$tmp_payload"
+      ARTIFACTS_DIR_REAL="$ARTIFACTS_DIR"
+      # Run with a slightly shifted ARTIFACTS_DIR so jira-fetch-epic writes to a sub-area,
+      # then move the relevant files up. Simpler: just point ARTIFACTS_DIR at a sub-dir.
+      mkdir -p "$ARTIFACTS_DIR/parent-epic"
+      cp "$tmp_payload" "$ARTIFACTS_DIR/parent-epic/trigger-payload.json"
+      ARTIFACTS_DIR="$ARTIFACTS_DIR/parent-epic" bun /home/user/Archon/.archon/scripts/jira-fetch-epic.ts > /dev/null
+      # Now download the attachments
+      ARTIFACTS_DIR="$ARTIFACTS_DIR/parent-epic" bun /home/user/Archon/.archon/scripts/jira-fetch-attachments.ts > /dev/null
+      # Surface the attachments.md to the main artifacts dir for the agent
+      cp "$ARTIFACTS_DIR/parent-epic/epic-context.md" "$ARTIFACTS_DIR/parent-epic-context.md"
+      cp "$ARTIFACTS_DIR/parent-epic/attachments.md" "$ARTIFACTS_DIR/parent-attachments.md"
+      echo "Wrote parent-epic-context.md and parent-attachments.md."
+      printf '\n{"parent_context":"%s","parent_attachments":"%s"}' \
+        "$ARTIFACTS_DIR/parent-epic-context.md" "$ARTIFACTS_DIR/parent-attachments.md"
+
+  - id: prepare-branch
+    depends_on: [ fetch-epic-tech-context ]
+    bash: |
+      # Create or check out branch <issue-key> in the worktree, push to origin.
+      set -euo pipefail
+      export ARTIFACTS_DIR="$ARTIFACTS_DIR"
+      bun /home/user/Archon/.archon/scripts/task-prepare-branch.ts
+
+  - id: generate-tests
+    depends_on: [ prepare-branch ]
+    prompt: |
+      You are a test-generation specialist. You write tests, NOT implementation.
+
+      ## Inputs (read these in order)
+
+      - `$ARTIFACTS_DIR/task-context.md` — the Jira task you are writing tests
+        for. Includes summary, full description, and acceptance criteria.
+      - `$ARTIFACTS_DIR/parent-epic-context.md` (if present) — the parent Epic's
+        framing: PRD highlights, architectural assumptions.
+      - `$ARTIFACTS_DIR/parent-attachments.md` (if present) — full content of
+        attached TechSpec, DesignDoc, STYLE_GUIDE, etc. This is the project's
+        technical truth. Read it to understand the chosen stack, file
+        conventions, schema, API contracts, and design tokens.
+      - The current branch checkout (cwd is the codebase). Look at what already
+        exists. For the very first task (greenfield), the repo will be nearly
+        empty.
+
+      ## Your role
+
+      Given the task's acceptance criteria, write the tests that — when they
+      pass — prove the criteria are satisfied. The dev agent will later write
+      the implementation against these tests, WITHOUT being able to read the
+      tests themselves. Your tests are the contract.
+
+      ## What to produce
+
+      1. **Unit tests (Vitest)** for testable units:
+         - Pure functions (helpers, validators, state-machine transitions, etc.)
+         - Backend mutations / queries / actions
+         - Component logic (props, state changes, event handlers)
+         File path: `tests/<task-id>/<unit-name>.test.ts` (or co-located
+         convention if the repo already has one — match it).
+
+      2. **E2E tests (Playwright)** for user-visible behavior:
+         - User flows that touch UI
+         - Round-trip flows that exercise frontend + backend together
+         File path: `e2e/<task-id>/<flow-name>.spec.ts`.
+
+      3. **Test infrastructure** if missing — `vitest.config.ts`,
+         `playwright.config.ts`, `tsconfig` adjustments — but ONLY if needed
+         for your tests to run. Don't add config that isn't used.
+
+      4. **Test devDependencies** in `package.json` if missing
+         (vitest, @vitest/ui, playwright, @playwright/test). Be minimal.
+
+      5. **Required npm scripts in `package.json`**. Ensure these exist so the
+         validation runner can invoke them deterministically:
+            - `"test"`: runs Vitest (e.g., `"vitest run"`)
+            - `"test:e2e"`: runs Playwright (e.g., `"playwright test"`)
+            - `"lint"`: runs ESLint (e.g., `"eslint ."`)
+            - `"typecheck"`: runs TypeScript in no-emit mode (e.g., `"tsc --noEmit"`)
+         If any are missing, add them. The implementation agent will define
+         the source code; you define the contract these scripts run against.
+
+      ## Per-AC test discipline
+
+      One test per acceptance criterion when possible. Name the test by the
+      criterion, verbatim or close to it:
+
+          test('Running `npm install && npm run dev` starts the Vite dev server without errors', ...)
+
+      That way a failure message tells the dev agent exactly which AC isn't
+      satisfied yet.
+
+      ## What NOT to write
+
+      - **No implementation code.** Do not edit anything in `src/`, `convex/`,
+        `app/`, or other source directories. The dev agent owns those.
+      - **No fixtures that test trivially.** A test like
+        `expect(true).toBe(true)` would pass without proving anything.
+      - **No mocks of the system under test.** If you need to mock external
+        services (Anthropic API, OAuth providers, email sending), do so —
+        but never mock the function whose AC you're testing.
+      - **No tests for code that doesn't exist yet AS IF it exists.** It is OK
+        and expected for tests to import modules that don't exist (the import
+        will fail at test time — that's the desired "red" state). The dev
+        agent will create those modules to satisfy the imports.
+
+      ## For greenfield tasks (e.g., scaffolding)
+
+      If the task is "set up the project," there's nothing for unit tests to
+      target yet. In that case, write:
+      - A trivial Vitest test (`tests/scaffolding.test.ts`) that imports a
+        well-known module (e.g., `import { describe } from 'vitest'`) and
+        asserts something true about the test environment. This proves Vitest
+        is wired correctly.
+      - A simple Playwright test (`e2e/scaffolding.spec.ts`) that visits
+        `http://localhost:5173/` (Vite default) and asserts a 200 response.
+        This proves the dev server starts.
+
+      ## Narration
+
+      Tell the user what you're doing as you work:
+      - which ACs you're translating into which kinds of tests
+      - any architectural decisions (e.g., "I'll use a shared test fixture
+        in tests/fixtures/users.ts because multiple tests need authenticated
+        users")
+      - any gaps you noticed in the task description that you're flagging
+        but not blocking on
+
+      The user is watching live. Be specific.
+
+      ## When done
+
+      Stop. Do not commit, do not push, do not transition the ticket — those
+      are downstream nodes. Output a one-line status:
+
+          Wrote N test files: <list>.
+
+  - id: verify-tests-exist
+    depends_on: [ generate-tests ]
+    bash: |
+      # Halt if the test-gen agent didn't actually write any test files.
+      set -euo pipefail
+      export ARTIFACTS_DIR="$ARTIFACTS_DIR"
+      bun /home/user/Archon/.archon/scripts/task-verify-tests-exist.ts > "$ARTIFACTS_DIR/test-files-report.json.tmp"
+      # The script writes the JSON to stdout PRECEDED by narration on stdout.
+      # Extract just the final line as the report.
+      tail -1 "$ARTIFACTS_DIR/test-files-report.json.tmp" > "$ARTIFACTS_DIR/test-files-report.json"
+      rm "$ARTIFACTS_DIR/test-files-report.json.tmp"
+      cat "$ARTIFACTS_DIR/test-files-report.json"
+
+  - id: commit-and-push
+    depends_on: [ verify-tests-exist ]
+    bash: |
+      # Stage test-shaped files, commit, push to origin.
+      set -euo pipefail
+      export ARTIFACTS_DIR="$ARTIFACTS_DIR"
+      bun /home/user/Archon/.archon/scripts/task-commit-push.ts > "$ARTIFACTS_DIR/commit-push-stdout.tmp"
+      cat "$ARTIFACTS_DIR/commit-push-stdout.tmp"
+      tail -1 "$ARTIFACTS_DIR/commit-push-stdout.tmp" > "$ARTIFACTS_DIR/commit-push-report.json"
+      rm "$ARTIFACTS_DIR/commit-push-stdout.tmp"
+
+  - id: transition-to-in-progress
+    depends_on: [ commit-and-push ]
+    bash: |
+      # Post a comment summarizing what test-gen produced, then transition the task to In Progress.
+      # The transition fires the next webhook (which task-implement will handle).
+      set -euo pipefail
+      export ARTIFACTS_DIR="$ARTIFACTS_DIR"
+      bun /home/user/Archon/.archon/scripts/jira-transition-task-to-in-progress.ts
+
+  - id: log-elapsed-on-task
+    depends_on: [ transition-to-in-progress ]
+    bash: |
+      # Log total workflow elapsed time as a worklog on the task itself.
+      # Visible in Jira's time-tracking reports for this ticket.
+      set -euo pipefail
+      export ARTIFACTS_DIR="$ARTIFACTS_DIR"
+      export WORKFLOW_NAME="task-tests"
+      bun /home/user/Archon/.archon/scripts/jira-log-elapsed.ts
