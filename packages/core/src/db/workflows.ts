@@ -8,7 +8,7 @@ import type {
   WorkflowRunStatus,
   ApprovalContext,
 } from '@archon/workflows/schemas/workflow-run';
-import { TERMINAL_WORKFLOW_STATUSES } from '@archon/workflows/schemas/workflow-run';
+import { DELETABLE_WORKFLOW_STATUSES } from '@archon/workflows/schemas/workflow-run';
 import { createLogger } from '@archon/paths';
 
 /** Best-effort ROLLBACK — log but swallow errors since we're already in an error path. */
@@ -989,7 +989,7 @@ export async function deleteWorkflowRun(id: string): Promise<void> {
     if (check.rows.length === 0) {
       throw new WorkflowRunGuardError(`Workflow run not found: ${id}`);
     }
-    if (!TERMINAL_WORKFLOW_STATUSES.includes(check.rows[0].status as WorkflowRunStatus)) {
+    if (!DELETABLE_WORKFLOW_STATUSES.includes(check.rows[0].status as WorkflowRunStatus)) {
       throw new WorkflowRunGuardError(
         `Cannot delete workflow run in '${check.rows[0].status}' status — cancel it first`
       );
