@@ -148,11 +148,23 @@ nodes:
         and acceptance criteria. This is the spec.
       - `$ARTIFACTS_DIR/parent-attachments.md` — the project's tech stack
         and conventions (TechSpec, DesignDoc, STYLE_GUIDE, etc.).
-      - The current branch checkout (cwd is the codebase). Spot-check
-        what already exists so you don't clobber prior work.
+      - The current branch checkout (cwd is the codebase).
 
-      The ticket tells you what to write. You should not need to explore
-      the repo to discover requirements — task-context.md and
+      RULES (no ambiguity, no exceptions):
+      - DO NOT READ TESTS. Never open files under `tests/`, `test/`,
+        `e2e/`, `__tests__/`, or matching `*.test.*` / `*.spec.*`.
+      - DO NOT WRITE OR EDIT TESTS. Never create or modify test files,
+        test fixtures, or test configs (vitest.config, playwright.config,
+        jest.config).
+      - DO NOT RUN TESTS. Never invoke `npm test`, `npm run test*`,
+        `vitest`, `playwright`, `jest`, or any test runner — by any path
+        (`npx`, `node ./node_modules/.bin/...`, anything).
+      - DO NOT ASK. Never ask "how should I…" or "should I run tests" —
+        you have one job, do it.
+      - WRITE CODE that satisfies the acceptance criteria, then COMMIT,
+        then FINISH. That is the entire workflow.
+
+      The ticket tells you what to write. task-context.md and
       parent-attachments.md are the contract. If the ticket is ambiguous,
       name the ambiguity in your commit message and pick the most direct
       interpretation.
@@ -248,11 +260,24 @@ nodes:
         fix. The acceptance criteria remain the standard for "done"; the
         failures here are concrete pointers to where the code is not yet
         meeting the ACs.
-      - The current branch checkout (cwd is the codebase). Spot-check
-        what already exists so you don't clobber prior work.
+      - The current branch checkout (cwd is the codebase).
 
-      The ticket tells you what to write. You should not need to explore
-      the repo to discover requirements — task-context.md and
+      RULES (no ambiguity, no exceptions):
+      - DO NOT READ TESTS. Never open files under `tests/`, `test/`,
+        `e2e/`, `__tests__/`, or matching `*.test.*` / `*.spec.*`.
+      - DO NOT WRITE OR EDIT TESTS. Never create or modify test files,
+        test fixtures, or test configs (vitest.config, playwright.config,
+        jest.config).
+      - DO NOT RUN TESTS. Never invoke `npm test`, `npm run test*`,
+        `vitest`, `playwright`, `jest`, or any test runner — by any path
+        (`npx`, `node ./node_modules/.bin/...`, anything).
+      - DO NOT ASK. Never ask "how should I…" or "should I run tests" —
+        you have one job, do it.
+      - WRITE CODE that satisfies the acceptance criteria and addresses
+        every failure in feedback.json, then COMMIT, then FINISH. That
+        is the entire workflow.
+
+      The ticket tells you what to write. task-context.md and
       parent-attachments.md are the contract.
 
       Output: commits on the current branch whose code, taken together,
