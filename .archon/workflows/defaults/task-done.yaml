@@ -5,6 +5,10 @@ description: Handle a non-Epic Jira ticket transitioning to Done — remove its 
 worktree:
   enabled: false
 
+# Pure API calls; no checkout mutation. Allow concurrent runs so two
+# tickets transitioning to Done at the same time don't serialize.
+mutates_checkout: false
+
 nodes:
   - id: decode
     bash: |

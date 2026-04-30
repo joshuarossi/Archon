@@ -4,6 +4,13 @@ description: Route Jira webhook events into placeholder SDLC handlers.
 worktree:
   enabled: false
 
+# Allow concurrent router runs. The router decodes a webhook payload and
+# dispatches background workflows; it does not mutate any checkout or
+# shared state, so two webhooks arriving in quick succession (e.g. when
+# task-done promotes three tickets at once) should both run, not have
+# the second one cancelled by the path-exclusive lock.
+mutates_checkout: false
+
 nodes:
   - id: decode
     bash: |
