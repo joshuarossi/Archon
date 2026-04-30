@@ -10,7 +10,7 @@
  *   package.json — for adding test devDependencies (allowed; dev workflow may add more)
  *   pnpm-lock.yaml / package-lock.json / bun.lockb — lockfile updates accompanying deps
  *
- * Anything else is left UNSTAGED so the dev workflow can pick it up.
+ * Any non-test edits are discarded so downstream dev starts clean.
  *
  * Reads:
  *   $ARTIFACTS_DIR/trigger-payload.json — for issue_key in commit message
@@ -18,7 +18,7 @@
  *
  * stdout: { committed, pushed, sha, files }
  */
-import { readFile } from 'node:fs/promises';
+import { readFile, rm } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
@@ -86,11 +86,20 @@ if (toStage.length === 0) {
 console.log(`Staging ${toStage.length} test-shaped file(s):`);
 for (const c of toStage) console.log(`  + ${c.path}`);
 if (skipped.length > 0) {
-  console.log(`Leaving ${skipped.length} non-test file(s) unstaged (dev workflow will pick up):`);
+  console.log(`Discarding ${skipped.length} non-test file(s) to keep branch clean:`);
   for (const c of skipped) console.log(`  - ${c.path}`);
 }
 
 await git('add', '--', ...toStage.map(c => c.path));
+
+// Normalize worktree state before commit so task-implement can rebase cleanly.
+for (const c of skipped) {
+  if (c.status === '??') {
+    await rm(c.path, { force: true, recursive: true });
+    continue;
+  }
+  await git('restore', '--worktree', '--staged', '--', c.path);
+}
 
 const message = `[test-gen] ${trigger.issue_key}: tests for "${summary}"`;
 console.log(`Committing: ${message}`);

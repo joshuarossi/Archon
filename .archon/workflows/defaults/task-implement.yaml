@@ -79,8 +79,33 @@ nodes:
   # cascades to skips, and we never reach the open-pr node. Rebasing first
   # also means the dev agent sees the actual current state of the codebase
   # rather than a snapshot from minutes/hours ago.
-  - id: rebase-on-main
+  - id: preflight-clean-worktree
     depends_on: [ fetch-epic-tech-context ]
+    bash: |
+      # Rebase must run on a clean branch. Retries/resumes can leave local
+      # modifications from a previously aborted dev attempt in the same ticket
+      # worktree. Normalize the checkout deterministically before rebase.
+      set -euo pipefail
+      changed="$(git status --porcelain || true)"
+      if [ -n "$changed" ]; then
+        echo "Pre-rebase sanitation: worktree dirty, normalizing to HEAD." >&2
+        printf '%s\n' "$changed" >&2
+
+        # Tracked files: discard staged + unstaged changes.
+        git reset --hard HEAD >/dev/null
+
+        # Untracked files: remove explicitly (never use git clean -fd).
+        # This is safe in per-ticket isolated worktrees and avoids carrying
+        # stale scratch files between retries.
+        while IFS= read -r rel; do
+          [ -n "$rel" ] || continue
+          rm -rf -- "$rel"
+        done < <(git ls-files --others --exclude-standard)
+      fi
+      printf '{"clean":"true","sanitized":"%s"}' "$( [ -n "$changed" ] && echo true || echo false )"
+
+  - id: rebase-on-main
+    depends_on: [ preflight-clean-worktree ]
     bash: |
       set -euo pipefail
       git fetch origin main --quiet
@@ -98,6 +123,7 @@ nodes:
   # The validation node alone is the authority on whether tests pass.
   - id: dev-attempt-1
     depends_on: [ rebase-on-main ]
+    context: fresh
     denied_tools:
       # Cannot read test source
       - "Read(tests/**)"
@@ -143,6 +169,15 @@ nodes:
       - "Edit(**/playwright.config.*)"
       - "Write(**/jest.config.*)"
       - "Edit(**/jest.config.*)"
+      - "Delete(tests/**)"
+      - "Delete(test/**)"
+      - "Delete(e2e/**)"
+      - "Delete(__tests__/**)"
+      - "Delete(**/*.test.*)"
+      - "Delete(**/*.spec.*)"
+      - "Delete(**/vitest.config.*)"
+      - "Delete(**/playwright.config.*)"
+      - "Delete(**/jest.config.*)"
       # Cannot run any test runner or quality gate — those are the validation
       # node's job, not the agent's.
       - "Bash(npm test:*)"
@@ -159,6 +194,10 @@ nodes:
       - "Bash(jest:*)"
       - "Bash(tsc:*)"
       - "Bash(eslint:*)"
+      # Block delegation/planning tools in the dev writer node.
+      - "Agent(*)"
+      - "TodoWrite(*)"
+      - "ToolSearch(*)"
     prompt: |
       Your task is to write code that satisfies every acceptance criterion
       in `$ARTIFACTS_DIR/task-context.md`. The acceptance criteria are
@@ -180,6 +219,11 @@ nodes:
       - DO NOT RUN TESTS. Never invoke `npm test`, `npm run test*`,
         `vitest`, `playwright`, `jest`, or any test runner — by any path
         (`npx`, `node ./node_modules/.bin/...`, anything).
+      - AUTOMATIC FAILURE CONDITION: if you create, modify, or delete any
+        file under `tests/`, `test/`, `e2e/`, `__tests__/`, any
+        `*.test.*` / `*.spec.*` file, or `vitest.config.*` /
+        `playwright.config.*` / `jest.config.*`, this attempt is invalid.
+        Do not touch those files.
       - DO NOT ASK. Never ask "how should I…" or "should I run tests" —
         you have one job, do it.
       - WRITE CODE that satisfies the acceptance criteria, then COMMIT,
@@ -210,6 +254,7 @@ nodes:
   - id: dev-attempt-2
     depends_on: [ validate-1 ]
     when: "$validate-1.output.passed == 'false'"
+    context: fresh
     denied_tools:
       - "Read(tests/**)"
       - "Read(test/**)"
@@ -251,6 +296,15 @@ nodes:
       - "Edit(**/playwright.config.*)"
       - "Write(**/jest.config.*)"
       - "Edit(**/jest.config.*)"
+      - "Delete(tests/**)"
+      - "Delete(test/**)"
+      - "Delete(e2e/**)"
+      - "Delete(__tests__/**)"
+      - "Delete(**/*.test.*)"
+      - "Delete(**/*.spec.*)"
+      - "Delete(**/vitest.config.*)"
+      - "Delete(**/playwright.config.*)"
+      - "Delete(**/jest.config.*)"
       - "Bash(npm test:*)"
       - "Bash(npm run test*)"
       - "Bash(npm run lint*)"
@@ -265,6 +319,10 @@ nodes:
       - "Bash(jest:*)"
       - "Bash(tsc:*)"
       - "Bash(eslint:*)"
+      # Block delegation/planning tools in the dev writer node.
+      - "Agent(*)"
+      - "TodoWrite(*)"
+      - "ToolSearch(*)"
     prompt: |
       Your task is to write code that satisfies every acceptance criterion
       in `$ARTIFACTS_DIR/task-context.md`, AND fix the failures listed in
@@ -292,6 +350,11 @@ nodes:
       - DO NOT RUN TESTS. Never invoke `npm test`, `npm run test*`,
         `vitest`, `playwright`, `jest`, or any test runner — by any path
         (`npx`, `node ./node_modules/.bin/...`, anything).
+      - AUTOMATIC FAILURE CONDITION: if you create, modify, or delete any
+        file under `tests/`, `test/`, `e2e/`, `__tests__/`, any
+        `*.test.*` / `*.spec.*` file, or `vitest.config.*` /
+        `playwright.config.*` / `jest.config.*`, this attempt is invalid.
+        Do not touch those files.
       - DO NOT ASK. Never ask "how should I…" or "should I run tests" —
         you have one job, do it.
       - WRITE CODE that satisfies the acceptance criteria and addresses
@@ -328,6 +391,7 @@ nodes:
   - id: dev-attempt-loop
     depends_on: [ validate-2 ]
     when: "$validate-2.output.passed == 'false'"
+    context: fresh
     loop:
       max_iterations: 5
       # Two ways to exit the loop, either is sufficient (Archon's loop
@@ -376,6 +440,11 @@ nodes:
           jest.config).
         - DO NOT RUN TESTS. Never invoke `npm test`, `npm run test*`,
           `vitest`, `playwright`, `jest`, or any test runner — by any path.
+        - AUTOMATIC FAILURE CONDITION: if you create, modify, or delete any
+          file under `tests/`, `test/`, `e2e/`, `__tests__/`, any
+          `*.test.*` / `*.spec.*` file, or `vitest.config.*` /
+          `playwright.config.*` / `jest.config.*`, this iteration is invalid.
+          Do not touch those files.
         - DO NOT ASK. You have one job, do it.
         - WRITE CODE that addresses each "failed" entry in feedback.json
           and satisfies the acceptance criteria, then COMMIT.
@@ -403,6 +472,7 @@ nodes:
     trigger_rule: all_done
     when: "$validate-1.output.passed == 'true' || $validate-2.output.passed
       == 'true' || $validate-loop.output.passed == 'true'"
+    context: fresh
     prompt: |
       Your task is to update user-facing documentation to reflect the changes
       on this branch.
@@ -447,6 +517,24 @@ nodes:
       export ARTIFACTS_DIR="$ARTIFACTS_DIR"
       bun /home/user/Archon/.archon/scripts/task-open-pr.ts
 
+  - id: verify-pr-ready
+    depends_on: [ open-pr ]
+    trigger_rule: all_done
+    bash: |
+      # Guard downstream review/synthesis/merge chain. If open-pr never ran,
+      # stop the rest of the DAG from fabricating review output.
+      set -euo pipefail
+      if [ ! -f "$ARTIFACTS_DIR/pr-info.json" ]; then
+        printf '{"ready":"false","reason":"missing_pr_info"}'
+        exit 0
+      fi
+      pr_number="$(jq -r '.pr_number // ""' "$ARTIFACTS_DIR/pr-info.json" 2>/dev/null || echo "")"
+      if [ -z "$pr_number" ]; then
+        printf '{"ready":"false","reason":"missing_pr_number"}'
+        exit 0
+      fi
+      printf '{"ready":"true","pr_number":"%s"}' "$pr_number"
+
   # ─── Review setup: write the artifacts the existing reviewer commands expect ──
   # archon-code-review-agent etc. read $ARTIFACTS_DIR/.pr-number and
   # $ARTIFACTS_DIR/review/scope.md. We have pr-info.json + task-context.md;
@@ -455,7 +543,8 @@ nodes:
   # Note: rebase-on-main now runs BEFORE dev-attempt-1, not here. The branch
   # is already on current main by the time reviewers see it.
   - id: setup-review-context
-    depends_on: [ open-pr ]
+    depends_on: [ verify-pr-ready ]
+    when: "$verify-pr-ready.output.ready == 'true'"
     bash: |
       set -euo pipefail
       mkdir -p "$ARTIFACTS_DIR/review"
@@ -486,6 +575,7 @@ nodes:
 
   - id: review-scope
     depends_on: [ setup-review-context ]
+    context: fresh
     output_format:
       type: object
       properties:
@@ -578,6 +668,19 @@ nodes:
     depends_on: [ setup-review-context ]
     context: fresh
 
+  - id: verify-reviewer-artifacts
+    depends_on: [ review-scope, review-code, review-error-handling, review-docs, review-comment-quality ]
+    trigger_rule: all_done
+    bash: |
+      # Synthesize must not run unless at least one reviewer artifact exists.
+      set -euo pipefail
+      count="$(ls -1 "$ARTIFACTS_DIR/review/"*-findings.md 2>/dev/null | wc -l | tr -d ' ')"
+      if [ "${count:-0}" -lt 1 ]; then
+        printf '{"has_findings":"false","count":0}'
+        exit 0
+      fi
+      printf '{"has_findings":"true","count":%s}' "$count"
+
   # ─── Synthesize the five reviewers' artifacts into a consolidated review ──
   # Uses the existing Archon synthesizer command; reads all *-findings.md
   # files, decides APPROVE/REQUEST_CHANGES based on severity thresholds,
@@ -594,8 +697,8 @@ nodes:
   # within seconds of each other.
   - id: synthesize
     command: archon-synthesize-review
-    depends_on: [ review-scope, review-code, review-error-handling, review-docs, review-comment-quality ]
-    trigger_rule: all_done
+    depends_on: [ verify-reviewer-artifacts ]
+    when: "$verify-reviewer-artifacts.output.has_findings == 'true'"
     context: fresh
 
   # ─── Parse the synthesizer's verdict into a JSON decision field ──
@@ -628,7 +731,7 @@ nodes:
     # leaving only literal questions ("do you want X or Y?") for humans.
     command: task-implement-fixes
     depends_on: [ parse-synthesis ]
-    when: "$parse-synthesis.output.decision == 'changes_requested'"
+    when: "$verify-pr-ready.output.ready == 'true' && $parse-synthesis.output.decision == 'changes_requested'"
     context: fresh
     denied_tools:
       - "Read(tests/**)"
@@ -693,7 +796,7 @@ nodes:
   # requested changes).
   - id: post-fix-validation
     depends_on: [ implement-fixes ]
-    when: "$parse-synthesis.output.decision == 'changes_requested'"
+    when: "$verify-pr-ready.output.ready == 'true' && $parse-synthesis.output.decision == 'changes_requested'"
     bash: |
       set -euo pipefail
       bash /home/user/Archon/.archon/scripts/task-run-validation.sh
@@ -709,7 +812,7 @@ nodes:
   # all_done + when clause keeps it from running because validation didn't
   # succeed — neither path is satisfied.
   - id: merge-pr
-    depends_on: [ open-pr, parse-synthesis, implement-fixes, post-fix-validation ]
+    depends_on: [ verify-pr-ready, parse-synthesis, implement-fixes, post-fix-validation ]
     trigger_rule: all_done
     # AND binds tighter than ||, so the gate reads as:
     #   synth approved  OR  (synth requested changes AND post-fix passed)
@@ -717,7 +820,9 @@ nodes:
     # pr-info.json on disk) — keeping that check in the consumer rather
     # than the gate avoids duplicating `$open-pr.output.pr_number != ''`
     # in every OR branch (Archon's condition evaluator has no parentheses).
-    when: "$parse-synthesis.output.decision == 'approve' ||
+    when: "$verify-pr-ready.output.ready == 'true' &&
+      $parse-synthesis.output.decision == 'approve' ||
+      $verify-pr-ready.output.ready == 'true' &&
       $parse-synthesis.output.decision == 'changes_requested' &&
       $post-fix-validation.output.passed == 'true'"
     bash: |
