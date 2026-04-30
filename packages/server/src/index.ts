@@ -357,6 +357,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<void> {
         projectCodebaseMap: config.jira?.projects ?? {},
       });
       await jira.start();
+      activePlatforms.push('Jira');
     } else {
       getLog().info('jira_adapter_skipped');
     }
@@ -762,16 +763,6 @@ export async function startServer(opts: ServerOptions = {}): Promise<void> {
   // because it occurs AFTER the for-await generator loop exits (and thus outside
   // the try/catch in claude.ts). These are SDK cleanup races, not fatal app errors.
   process.on('unhandledRejection', handleUnhandledRejection);
-
-  // Show active platforms
-  const activePlatforms = ['Web'];
-  if (telegram) activePlatforms.push('Telegram');
-  if (discord) activePlatforms.push('Discord');
-  if (slack) activePlatforms.push('Slack');
-  if (github) activePlatforms.push('GitHub');
-  if (gitea) activePlatforms.push('Gitea');
-  if (gitlab) activePlatforms.push('GitLab');
-  if (jira) activePlatforms.push('Jira');
 
   getLog().info({ activePlatforms, port }, 'server_ready');
 
