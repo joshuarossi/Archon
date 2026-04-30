@@ -138,12 +138,17 @@ interface SearchResponse {
   issues: Issue[];
 }
 
+// Exclude tickets bearing `archon-blocked-pending` from promotion. That label
+// is the human-controlled "leave this alone for now" pause signal — when it
+// is set, a ticket sits in Backlog forever (no router event fires) until a
+// human removes the label by hand. The sweep simply doesn't see those rows,
+// so no failed task-tests run is produced and no comment noise is created.
 const jql = encodeURIComponent(
-  `project = ${project} AND status = "Backlog" AND issuetype != Epic`,
+  `project = ${project} AND status = "Backlog" AND issuetype != Epic AND labels != "archon-blocked-pending"`,
 );
-const searchPath = `/rest/api/3/search/jql?jql=${jql}&fields=issuelinks,issuetype,status&maxResults=200`;
+const searchPath = `/rest/api/3/search/jql?jql=${jql}&fields=issuelinks,issuetype,status,labels&maxResults=200`;
 const searchResult = await jiraGet<SearchResponse>(searchPath);
-log(`  ${searchResult.issues.length} Backlog non-Epic ticket(s) in project.`);
+log(`  ${searchResult.issues.length} Backlog non-Epic, non-paused ticket(s) in project.`);
 
 const promoted: string[] = [];
 for (const candidate of searchResult.issues) {
