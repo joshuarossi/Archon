@@ -160,7 +160,11 @@ nodes:
       # Always exits 0; the JSON output's `passed` field drives the retry decision.
       set -euo pipefail
       export ARTIFACTS_DIR="$ARTIFACTS_DIR"
-      export ISSUE_KEY="$decode.output.issue_key"
+      # No surrounding quotes: $decode.output.issue_key substitutes as a
+      # shell-quoted literal (e.g. 'WOR-23'). Wrapping it in "..." would
+      # produce export ISSUE_KEY="'WOR-23'" — the embedded single quotes
+      # become part of the value.
+      export ISSUE_KEY=$decode.output.issue_key
       bash /home/user/Archon/.archon/scripts/task-run-validation.sh
 
   # ─── Dev attempt 2 + validation gate 2 (only if attempt 1 failed validation) ──
@@ -249,7 +253,11 @@ nodes:
     bash: |
       set -euo pipefail
       export ARTIFACTS_DIR="$ARTIFACTS_DIR"
-      export ISSUE_KEY="$decode.output.issue_key"
+      # No surrounding quotes: $decode.output.issue_key substitutes as a
+      # shell-quoted literal (e.g. 'WOR-23'). Wrapping it in "..." would
+      # produce export ISSUE_KEY="'WOR-23'" — the embedded single quotes
+      # become part of the value.
+      export ISSUE_KEY=$decode.output.issue_key
       bash /home/user/Archon/.archon/scripts/task-run-validation.sh
 
   - id: generate-docs
@@ -430,6 +438,21 @@ nodes:
     trigger_rule: one_success
     context: fresh
 
+  # ─── Parse the synthesizer's verdict into a JSON decision field ──
+  # The bundled archon-synthesize-review command emits prose narration on
+  # stdout and writes consolidated-review.md to disk — it does NOT emit a
+  # JSON `decision` field, so $synthesize.output.decision resolves to ''
+  # and downstream `when:` gates would always evaluate false.
+  # This bridge node reads the markdown verdict and re-emits it as JSON
+  # ({"decision":"approve"|"changes_requested"|"needs_discussion"}) on
+  # stdout so the implement-fixes / merge-pr gates can route correctly.
+  - id: parse-synthesis
+    depends_on: [ synthesize ]
+    bash: |
+      set -euo pipefail
+      export ARTIFACTS_DIR="$ARTIFACTS_DIR"
+      bun /home/user/Archon/.archon/scripts/task-parse-synthesis.ts
+
   # ─── Implement fixes if synthesizer requested changes ──
   # Existing Archon command; reads consolidated-review.md + per-reviewer
   # findings; makes the changes; commits.
@@ -438,8 +461,8 @@ nodes:
   # failures are "pre-existing" because it cannot observe them.
   - id: implement-fixes
     command: archon-implement-review-fixes
-    depends_on: [ synthesize ]
-    when: "$synthesize.output.decision == 'changes_requested'"
+    depends_on: [ parse-synthesis ]
+    when: "$parse-synthesis.output.decision == 'changes_requested'"
     context: fresh
     denied_tools:
       - "Read(tests/**)"
@@ -504,11 +527,15 @@ nodes:
   # requested changes).
   - id: post-fix-validation
     depends_on: [ implement-fixes ]
-    when: "$synthesize.output.decision == 'changes_requested'"
+    when: "$parse-synthesis.output.decision == 'changes_requested'"
     bash: |
       set -euo pipefail
       export ARTIFACTS_DIR="$ARTIFACTS_DIR"
-      export ISSUE_KEY="$decode.output.issue_key"
+      # No surrounding quotes: $decode.output.issue_key substitutes as a
+      # shell-quoted literal (e.g. 'WOR-23'). Wrapping it in "..." would
+      # produce export ISSUE_KEY="'WOR-23'" — the embedded single quotes
+      # become part of the value.
+      export ISSUE_KEY=$decode.output.issue_key
       bash /home/user/Archon/.archon/scripts/task-run-validation.sh
 
   # ─── Merge gate ──
@@ -522,15 +549,15 @@ nodes:
   # all_done + when clause keeps it from running because validation didn't
   # succeed — neither path is satisfied.
   - id: merge-pr
-    depends_on: [ synthesize, implement-fixes, post-fix-validation ]
+    depends_on: [ parse-synthesis, implement-fixes, post-fix-validation ]
     trigger_rule: all_done
     # Archon's condition evaluator does not support parentheses (see
     # condition-evaluator.ts: "AND has higher precedence than OR. No
     # parentheses."). The two-path gate is expressed via that precedence:
     # `approve` OR (`changes_requested` AND `passed='true'`). With && bound
     # tighter than ||, the unparenthesized form below evaluates identically.
-    when: "$synthesize.output.decision == 'approve' ||
-      $synthesize.output.decision == 'changes_requested' &&
+    when: "$parse-synthesis.output.decision == 'approve' ||
+      $parse-synthesis.output.decision == 'changes_requested' &&
       $post-fix-validation.output.passed == 'true'"
     bash: |
       # Squash-merge the PR, delete the branch, post Jira confirmation.

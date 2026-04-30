@@ -24,12 +24,25 @@ exec 3>&1 1>&2
 ARTIFACTS_DIR="${ARTIFACTS_DIR:?ARTIFACTS_DIR not set}"
 ISSUE_KEY="${ISSUE_KEY:?ISSUE_KEY not set}"
 
-# Lowercase the issue key for filesystem lookups. Jira keys are uppercase
-# (WOR-23) but the test-gen workflow scaffolds tests under tests/wor-23/
-# and e2e/wor-23/. Without this, validate-1 always SKIPS vitest/playwright
-# because the uppercase directory doesn't exist — the gates pass trivially
-# and the dev agent ships code that satisfies no tests.
-ISSUE_KEY_LC=$(echo "$ISSUE_KEY" | tr '[:upper:]' '[:lower:]')
+# Resolve the per-ticket test directory case-insensitively. The Jira key is
+# uppercase (WOR-23) but test-gen agents have scaffolded tests under both
+# tests/WOR-23/ and tests/wor-23/ on different runs; rather than fight that,
+# locate whichever exists. Falls back to the lowercase form if neither
+# exists, so the SKIP message is consistent.
+find_ticket_dir() {
+  local parent="$1"
+  local key_lc key_uc
+  key_lc=$(echo "$ISSUE_KEY" | tr '[:upper:]' '[:lower:]')
+  key_uc=$(echo "$ISSUE_KEY" | tr '[:lower:]' '[:upper:]')
+  if [ -d "$parent/$ISSUE_KEY" ]; then echo "$parent/$ISSUE_KEY"
+  elif [ -d "$parent/$key_lc" ]; then echo "$parent/$key_lc"
+  elif [ -d "$parent/$key_uc" ]; then echo "$parent/$key_uc"
+  else echo "$parent/$key_lc"  # fallback for the SKIP message
+  fi
+}
+
+VITEST_DIR=$(find_ticket_dir tests)
+PLAYWRIGHT_DIR=$(find_ticket_dir e2e)
 
 mkdir -p "$ARTIFACTS_DIR/test-results"
 REPORT="$ARTIFACTS_DIR/feedback.json"
@@ -111,19 +124,19 @@ else
 fi
 echo
 
-# 3. Vitest scoped to this ticket's tests (lowercase dir, see ISSUE_KEY_LC above)
-if [ -d "tests/$ISSUE_KEY_LC" ]; then
-  run_gate "vitest" "npx vitest run tests/$ISSUE_KEY_LC --reporter=default" || OVERALL=1
+# 3. Vitest scoped to this ticket's tests (case-insensitive dir resolution)
+if [ -d "$VITEST_DIR" ]; then
+  run_gate "vitest" "npx vitest run $VITEST_DIR --reporter=default" || OVERALL=1
 else
-  skip_gate "vitest" "tests/$ISSUE_KEY_LC/ does not exist"
+  skip_gate "vitest" "$VITEST_DIR/ does not exist"
 fi
 echo
 
 # 4. Playwright scoped to this ticket's specs
-if [ -d "e2e/$ISSUE_KEY_LC" ]; then
-  run_gate "playwright" "npx playwright test e2e/$ISSUE_KEY_LC --reporter=line" || OVERALL=1
+if [ -d "$PLAYWRIGHT_DIR" ]; then
+  run_gate "playwright" "npx playwright test $PLAYWRIGHT_DIR --reporter=line" || OVERALL=1
 else
-  skip_gate "playwright" "e2e/$ISSUE_KEY_LC/ does not exist"
+  skip_gate "playwright" "$PLAYWRIGHT_DIR/ does not exist"
 fi
 echo
 
