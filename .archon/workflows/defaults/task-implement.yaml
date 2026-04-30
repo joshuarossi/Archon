@@ -142,16 +142,38 @@ nodes:
       Your task is to write code that satisfies the acceptance criteria in
       `$ARTIFACTS_DIR/task-context.md`.
 
-      Inputs:
-      - `$ARTIFACTS_DIR/task-context.md` — the task summary, description, and
-        acceptance criteria.
-      - `$ARTIFACTS_DIR/parent-attachments.md` — the project's tech stack
-        and conventions (TechSpec, DesignDoc, STYLE_GUIDE, etc.).
-      - The current branch checkout (cwd is the codebase). Read what already
-        exists before writing.
+      The acceptance criteria are the standard — not tests, not lint, not
+      typecheck. Those are quality gates that run elsewhere in the
+      pipeline and detect drift; they are not the spec. If your code
+      satisfies every AC and a test would still fail, you are still
+      done — surface the conflict in your commit message and move on.
+      If your code passes every test but does not satisfy an AC, you
+      are not done.
 
-      Output: commits on the current branch that satisfy every acceptance
-      criterion. Commit when done.
+      The ticket should tell you what to write. You should not need to
+      explore the repo to discover requirements — task-context.md and
+      parent-attachments.md are the contract. The only legitimate
+      reasons to read existing files are:
+        (a) to know what is already on the branch so you don't clobber
+            prior work,
+        (b) to follow an explicit "see X.ts" reference in the task or
+            attachments.
+      Don't spelunk for clues. If the ticket is ambiguous, name the
+      ambiguity in your commit message and pick the most direct
+      interpretation.
+
+      Inputs:
+      - `$ARTIFACTS_DIR/task-context.md` — the task summary, description,
+        and acceptance criteria. THIS IS THE SPEC.
+      - `$ARTIFACTS_DIR/parent-attachments.md` — the project's tech stack
+        and conventions (TechSpec, DesignDoc, STYLE_GUIDE, etc.). Read
+        ONLY the parts the ticket points you at, or to confirm a stack
+        decision (framework, language, schema shape).
+      - The current branch checkout (cwd is the codebase). Spot-check
+        what already exists; do not enumerate or audit.
+
+      Output: commits on the current branch whose code, taken together,
+      satisfies every acceptance criterion. Commit when done.
 
   - id: validate-1
     depends_on: [ dev-attempt-1 ]
@@ -233,19 +255,36 @@ nodes:
       Your task is to write code that satisfies the acceptance criteria in
       `$ARTIFACTS_DIR/task-context.md`.
 
-      Inputs:
-      - `$ARTIFACTS_DIR/task-context.md` — the task summary, description, and
-        acceptance criteria.
-      - `$ARTIFACTS_DIR/parent-attachments.md` — the project's tech stack
-        and conventions.
-      - `$ARTIFACTS_DIR/feedback.json` — a structured report of which
-        acceptance criteria are not yet satisfied by the current branch.
-        Read it and address what it reports.
-      - The current branch checkout (cwd is the codebase). Read what already
-        exists before writing.
+      The acceptance criteria are the standard — not tests, not lint, not
+      typecheck. The gates in `feedback.json` are signals of drift, not
+      the spec. Use them to find which AC is not yet satisfied; close the
+      AC, not just the gate. If a gate passes but the AC is still not
+      met, you are not done. If your code satisfies every AC and a gate
+      still fails, surface the conflict in your commit message and move
+      on.
 
-      Output: commits on the current branch that close every gap reported in
-      `feedback.json`. Commit when done.
+      The ticket should tell you what to write. You should not need to
+      explore the repo to discover requirements — task-context.md and
+      parent-attachments.md are the contract. Read existing files only
+      to (a) know what is already on the branch so you don't clobber
+      prior work, or (b) follow an explicit reference in the task or
+      attachments. Don't spelunk for clues.
+
+      Inputs:
+      - `$ARTIFACTS_DIR/task-context.md` — the task summary, description,
+        and acceptance criteria. THIS IS THE SPEC.
+      - `$ARTIFACTS_DIR/parent-attachments.md` — the project's tech stack
+        and conventions. Read ONLY what the ticket points you at.
+      - `$ARTIFACTS_DIR/feedback.json` — quality-gate results from the
+        prior attempt (which lint/typecheck/vitest/playwright runs
+        passed or failed, with logs). Use these as drift signals to
+        find which acceptance criterion you missed. Treat them as
+        instruments, not the spec.
+      - The current branch checkout (cwd is the codebase). Spot-check
+        what already exists; do not enumerate or audit.
+
+      Output: commits on the current branch whose code, taken together,
+      satisfies every acceptance criterion. Commit when done.
 
   - id: validate-2
     depends_on: [ dev-attempt-2 ]
