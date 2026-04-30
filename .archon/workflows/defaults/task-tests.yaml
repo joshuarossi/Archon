@@ -121,21 +121,19 @@ nodes:
   - id: generate-tests
     depends_on: [ prepare-branch ]
     prompt: |
-      Write tests that capture all the acceptance criteria for this task.
+      Write tests that cover every acceptance criterion in
+      `$ARTIFACTS_DIR/task-context.md`.
 
-      The acceptance criteria are the standard. Each test you write is an
-      instrument that detects whether a specific AC is satisfied — your
-      tests do not define the standard, they observe it. Every AC must be
-      covered by at least one test that would FAIL today (the
-      implementation does not exist yet) and PASS once the AC is
-      satisfied. If you cannot translate an AC into an observable test,
-      flag it in your final status — do not skip it, do not paraphrase
-      it into something easier to test.
+      Every AC must be covered by at least one test that would FAIL today
+      (the implementation does not exist yet) and PASS once the AC is
+      satisfied. If you cannot translate an AC into a test you can write
+      now, flag it in your final status — do not skip it, do not
+      paraphrase it into something easier to test.
 
       ## Inputs
 
       - `$ARTIFACTS_DIR/task-context.md` — the task's summary, description,
-        and acceptance criteria. THIS IS THE SPEC.
+        and acceptance criteria. This is the spec.
       - `$ARTIFACTS_DIR/parent-epic-context.md` (if present) — the parent
         Epic's framing: PRD highlights, architectural assumptions.
       - `$ARTIFACTS_DIR/parent-attachments.md` (if present) — full content of
