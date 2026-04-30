@@ -495,9 +495,14 @@ nodes:
   - id: merge-pr
     depends_on: [ synthesize, implement-fixes, post-fix-validation ]
     trigger_rule: all_done
-    when: "($synthesize.output.decision == 'approve') ||
-      ($synthesize.output.decision == 'changes_requested' &&
-       $post-fix-validation.output.passed == 'true')"
+    # Archon's condition evaluator does not support parentheses (see
+    # condition-evaluator.ts: "AND has higher precedence than OR. No
+    # parentheses."). The two-path gate is expressed via that precedence:
+    # `approve` OR (`changes_requested` AND `passed='true'`). With && bound
+    # tighter than ||, the unparenthesized form below evaluates identically.
+    when: "$synthesize.output.decision == 'approve' ||
+      $synthesize.output.decision == 'changes_requested' &&
+      $post-fix-validation.output.passed == 'true'"
     bash: |
       # Squash-merge the PR, delete the branch, post Jira confirmation.
       set -euo pipefail

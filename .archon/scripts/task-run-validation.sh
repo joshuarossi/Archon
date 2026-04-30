@@ -14,8 +14,22 @@
 #
 set -uo pipefail
 
+# Redirect ALL of this script's narrative output (gate banners, tail dumps,
+# pass/fail markers) to stderr, leaving stdout for the single trailing JSON
+# line. The bash node's stdout is what gets captured into the workflow's
+# nodeOutput; downstream `when:` clauses parse it as JSON, so any prose on
+# stdout makes JSON.parse fail and the condition evaluates to ''.
+exec 3>&1 1>&2
+
 ARTIFACTS_DIR="${ARTIFACTS_DIR:?ARTIFACTS_DIR not set}"
 ISSUE_KEY="${ISSUE_KEY:?ISSUE_KEY not set}"
+
+# Lowercase the issue key for filesystem lookups. Jira keys are uppercase
+# (WOR-23) but the test-gen workflow scaffolds tests under tests/wor-23/
+# and e2e/wor-23/. Without this, validate-1 always SKIPS vitest/playwright
+# because the uppercase directory doesn't exist — the gates pass trivially
+# and the dev agent ships code that satisfies no tests.
+ISSUE_KEY_LC=$(echo "$ISSUE_KEY" | tr '[:upper:]' '[:lower:]')
 
 mkdir -p "$ARTIFACTS_DIR/test-results"
 REPORT="$ARTIFACTS_DIR/feedback.json"
@@ -97,19 +111,19 @@ else
 fi
 echo
 
-# 3. Vitest scoped to this ticket's tests
-if [ -d "tests/$ISSUE_KEY" ]; then
-  run_gate "vitest" "npx vitest run tests/$ISSUE_KEY --reporter=default" || OVERALL=1
+# 3. Vitest scoped to this ticket's tests (lowercase dir, see ISSUE_KEY_LC above)
+if [ -d "tests/$ISSUE_KEY_LC" ]; then
+  run_gate "vitest" "npx vitest run tests/$ISSUE_KEY_LC --reporter=default" || OVERALL=1
 else
-  skip_gate "vitest" "tests/$ISSUE_KEY/ does not exist"
+  skip_gate "vitest" "tests/$ISSUE_KEY_LC/ does not exist"
 fi
 echo
 
 # 4. Playwright scoped to this ticket's specs
-if [ -d "e2e/$ISSUE_KEY" ]; then
-  run_gate "playwright" "npx playwright test e2e/$ISSUE_KEY --reporter=line" || OVERALL=1
+if [ -d "e2e/$ISSUE_KEY_LC" ]; then
+  run_gate "playwright" "npx playwright test e2e/$ISSUE_KEY_LC --reporter=line" || OVERALL=1
 else
-  skip_gate "playwright" "e2e/$ISSUE_KEY/ does not exist"
+  skip_gate "playwright" "e2e/$ISSUE_KEY_LC/ does not exist"
 fi
 echo
 
@@ -131,11 +145,13 @@ echo "════════════════════════�
 if [ $OVERALL -eq 0 ]; then
   echo "✓ ALL GATES PASSED for $ISSUE_KEY"
   echo "══════════════════════════════════════════════════════════════════"
-  printf '\n{"passed":"true","issue_key":"%s","report":"%s"}' "$ISSUE_KEY" "$REPORT"
+  # Final JSON goes to the saved real stdout (fd 3) so it's the ONLY thing
+  # downstream `when:` clauses see. Narrative is on stderr (fd 2).
+  printf '{"passed":"true","issue_key":"%s","report":"%s"}\n' "$ISSUE_KEY" "$REPORT" >&3
 else
   echo "✗ GATE(S) FAILED for $ISSUE_KEY — feedback.json written; next dev attempt will read it."
   echo "══════════════════════════════════════════════════════════════════"
-  printf '\n{"passed":"false","issue_key":"%s","report":"%s"}' "$ISSUE_KEY" "$REPORT"
+  printf '{"passed":"false","issue_key":"%s","report":"%s"}\n' "$ISSUE_KEY" "$REPORT" >&3
 fi
 # Always exit 0. The DAG's `when:` clauses gate on the JSON output's passed field,
 # not on the exit code. This lets downstream conditional nodes route on test
