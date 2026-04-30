@@ -620,7 +620,7 @@ nodes:
   # cannot run test runners. The fix-implementation cannot decide test
   # failures are "pre-existing" because it cannot observe them.
   - id: implement-fixes
-    # Our own fix-implementer (.archon/commands/task-implement-fixes.md), not
+    # Our own fix-implementer (.archon/commands/defaults/task-implement-fixes.md — bundled), not
     # the bundled archon-implement-review-fixes. The bundled command is built
     # for human-in-the-loop workflows: it fixes only CRITICAL/HIGH and treats
     # MEDIUM/LOW as "for the user to decide." Our pipeline is autonomous, so
