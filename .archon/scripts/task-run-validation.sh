@@ -185,7 +185,9 @@ ATTEMPT_NUM="$ATTEMPT_NUM" ISSUE_KEY="$ISSUE_KEY" OVERALL_STATUS="$OVERALL_STATU
   const json = JSON.stringify(report, null, 2);
   writeFileSync(process.env.REPORT, json);
   writeFileSync(process.env.CANONICAL_REPORT, json);
-  console.log(`Reports written: ${process.env.REPORT} (and copy at feedback.json)`);
+  // Clean path-only line so any downstream consumer that turns it into a
+  // URL gets a real URL — no parens, no spaces, no commentary.
+  console.log(process.env.REPORT);
 '
 
 echo "══════════════════════════════════════════════════════════════════"
