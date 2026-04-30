@@ -157,15 +157,12 @@ fi
 echo
 
 # 4. Playwright scoped to this ticket's specs.
-# Ensure browsers are installed BEFORE the gate runs — a fresh worktree
-# has @playwright/test in node_modules but no chromium binary yet, and a
-# missing-binary error would mark the gate failed for environmental
-# reasons rather than for a real AC failure. Run `npx playwright install
-# --with-deps chromium` once; it's a no-op on subsequent runs (browsers
-# live in ~/.cache/ms-playwright outside the worktree).
+# This script runs the gates the project defines. Setup (npm install,
+# playwright install, etc.) is the dev agent's job — if a Playwright-using
+# project hasn't run `playwright install`, the gate will fail with the
+# missing-binary error, which is correct: the dev agent shipped a broken
+# setup and the failure is real signal it must address on the next attempt.
 if [ -d "$PLAYWRIGHT_DIR" ]; then
-  echo "── Ensuring Playwright browsers installed ──"
-  npx playwright install --with-deps chromium 2>&1 | tail -5 || true
   run_gate "playwright" "npx playwright test $PLAYWRIGHT_DIR --reporter=line" || OVERALL=1
 else
   skip_gate "playwright" "$PLAYWRIGHT_DIR/ does not exist"
