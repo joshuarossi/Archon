@@ -71,12 +71,33 @@ nodes:
       printf '\n{"parent_context":"%s","parent_attachments":"%s"}' \
         "$ARTIFACTS_DIR/parent-epic-context.md" "$ARTIFACTS_DIR/parent-attachments.md"
 
+  # ─── Rebase the branch onto current origin/main BEFORE the dev runs ──
+  # The test-gen workflow already pushed tests to this branch off whatever
+  # main was when it ran. Sibling tickets may have merged in the meantime;
+  # if we don't rebase first, validate-1 fails on tests/lint/typecheck
+  # against THOSE sibling tickets' files (stale-base illusion), the chain
+  # cascades to skips, and we never reach the open-pr node. Rebasing first
+  # also means the dev agent sees the actual current state of the codebase
+  # rather than a snapshot from minutes/hours ago.
+  - id: rebase-on-main
+    depends_on: [ fetch-epic-tech-context ]
+    bash: |
+      set -euo pipefail
+      git fetch origin main --quiet
+      if ! git rebase origin/main; then
+        echo "Rebase onto origin/main produced conflicts. Aborting; surface to human." >&2
+        git rebase --abort || true
+        exit 1
+      fi
+      git push --force-with-lease origin HEAD --quiet
+      printf '{"rebased":"true","onto":"%s"}' "$(git rev-parse origin/main | cut -c1-12)"
+
   # ─── Dev attempt 1 + validation gate 1 ─────────────────────────────────
   # The dev agent has hard tool-permission rules that prevent it from reading,
   # modifying, or running tests. The agent's only contract is "satisfy the ACs."
   # The validation node alone is the authority on whether tests pass.
   - id: dev-attempt-1
-    depends_on: [ fetch-epic-tech-context ]
+    depends_on: [ rebase-on-main ]
     denied_tools:
       # Cannot read test source
       - "Read(tests/**)"
@@ -340,33 +361,15 @@ nodes:
       export ARTIFACTS_DIR="$ARTIFACTS_DIR"
       bun /home/user/Archon/.archon/scripts/task-open-pr.ts
 
-  # ─── Rebase the branch onto current origin/main before reviewers run ──
-  # Sibling tickets that merged during this run would otherwise show up
-  # as "deletions" in the reviewers' `git diff origin/main...HEAD` view —
-  # the branch was created from an older main, so files that landed since
-  # appear absent. Rebasing onto current main eliminates the false-positive
-  # "you deleted X" findings (saw this on WOR-42 when WOR-25 merged
-  # mid-run). If the rebase has real conflicts, fail loudly — that's
-  # genuine signal a human should look at.
-  - id: rebase-on-main
-    depends_on: [ open-pr ]
-    bash: |
-      set -euo pipefail
-      git fetch origin main --quiet
-      if ! git rebase origin/main; then
-        echo "Rebase onto origin/main produced conflicts. Aborting; surface to human." >&2
-        git rebase --abort || true
-        exit 1
-      fi
-      git push --force-with-lease origin HEAD --quiet
-      printf '{"rebased":"true","onto":"%s"}' "$(git rev-parse origin/main | cut -c1-12)"
-
   # ─── Review setup: write the artifacts the existing reviewer commands expect ──
   # archon-code-review-agent etc. read $ARTIFACTS_DIR/.pr-number and
   # $ARTIFACTS_DIR/review/scope.md. We have pr-info.json + task-context.md;
   # this bridge converts.
+  #
+  # Note: rebase-on-main now runs BEFORE dev-attempt-1, not here. The branch
+  # is already on current main by the time reviewers see it.
   - id: setup-review-context
-    depends_on: [ rebase-on-main ]
+    depends_on: [ open-pr ]
     bash: |
       set -euo pipefail
       mkdir -p "$ARTIFACTS_DIR/review"
