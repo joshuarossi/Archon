@@ -121,58 +121,45 @@ nodes:
   - id: generate-tests
     depends_on: [ prepare-branch ]
     prompt: |
-      You are a test-generation specialist. You write tests, NOT implementation.
+      Write tests that capture all the acceptance criteria for this task.
 
-      ## Inputs (read these in order)
+      ## Inputs
 
-      - `$ARTIFACTS_DIR/task-context.md` — the Jira task you are writing tests
-        for. Includes summary, full description, and acceptance criteria.
-      - `$ARTIFACTS_DIR/parent-epic-context.md` (if present) — the parent Epic's
-        framing: PRD highlights, architectural assumptions.
+      - `$ARTIFACTS_DIR/task-context.md` — the task's summary, description,
+        and acceptance criteria.
+      - `$ARTIFACTS_DIR/parent-epic-context.md` (if present) — the parent
+        Epic's framing: PRD highlights, architectural assumptions.
       - `$ARTIFACTS_DIR/parent-attachments.md` (if present) — full content of
         attached TechSpec, DesignDoc, STYLE_GUIDE, etc. This is the project's
-        technical truth. Read it to understand the chosen stack, file
-        conventions, schema, API contracts, and design tokens.
-      - The current branch checkout (cwd is the codebase). Look at what already
-        exists. For the very first task (greenfield), the repo will be nearly
-        empty.
-
-      ## Your role
-
-      Given the task's acceptance criteria, write the tests that — when they
-      pass — prove the criteria are satisfied. The dev agent will later write
-      the implementation against these tests, WITHOUT being able to read the
-      tests themselves. Your tests are the contract.
+        technical truth: chosen stack, file conventions, schema, API
+        contracts, and design tokens.
+      - The current branch checkout (cwd is the codebase). For greenfield
+        tasks the repo will be nearly empty.
 
       ## What to produce
 
-      1. **Unit tests (Vitest)** for testable units:
-         - Pure functions (helpers, validators, state-machine transitions, etc.)
-         - Backend mutations / queries / actions
-         - Component logic (props, state changes, event handlers)
-         File path: `tests/<task-id>/<unit-name>.test.ts` (or co-located
-         convention if the repo already has one — match it).
+      1. **Unit tests (Vitest)** for testable units: pure functions, backend
+         mutations/queries/actions, component logic.
+         File path: `tests/<task-id>/<unit-name>.test.ts` (lowercase task-id;
+         match any existing co-located convention in the repo if one exists).
 
-      2. **E2E tests (Playwright)** for user-visible behavior:
-         - User flows that touch UI
-         - Round-trip flows that exercise frontend + backend together
-         File path: `e2e/<task-id>/<flow-name>.spec.ts`.
+      2. **E2E tests (Playwright)** for user-visible behavior: user flows that
+         touch UI, round-trip flows that exercise frontend + backend together.
+         File path: `e2e/<task-id>/<flow-name>.spec.ts` (lowercase).
 
-      3. **Test infrastructure** if missing — `vitest.config.ts`,
-         `playwright.config.ts`, `tsconfig` adjustments — but ONLY if needed
-         for your tests to run. Don't add config that isn't used.
+      3. **Test infrastructure** (`vitest.config.ts`, `playwright.config.ts`,
+         tsconfig adjustments) only if needed for your tests to run. Don't
+         add config that isn't used.
 
       4. **Test devDependencies** in `package.json` if missing
          (vitest, @vitest/ui, playwright, @playwright/test). Be minimal.
 
-      5. **Required npm scripts in `package.json`**. Ensure these exist so the
-         validation runner can invoke them deterministically:
+      5. **Required npm scripts in `package.json`**:
             - `"test"`: runs Vitest (e.g., `"vitest run"`)
             - `"test:e2e"`: runs Playwright (e.g., `"playwright test"`)
             - `"lint"`: runs ESLint (e.g., `"eslint ."`)
             - `"typecheck"`: runs TypeScript in no-emit mode (e.g., `"tsc --noEmit"`)
-         If any are missing, add them. The implementation agent will define
-         the source code; you define the contract these scripts run against.
+         If any are missing, add them.
 
       ## Per-AC test discipline
 
@@ -181,51 +168,41 @@ nodes:
 
           test('Running `npm install && npm run dev` starts the Vite dev server without errors', ...)
 
-      That way a failure message tells the dev agent exactly which AC isn't
-      satisfied yet.
-
       ## What NOT to write
 
       - **No implementation code.** Do not edit anything in `src/`, `convex/`,
-        `app/`, or other source directories. The dev agent owns those.
-      - **No fixtures that test trivially.** A test like
-        `expect(true).toBe(true)` would pass without proving anything.
-      - **No mocks of the system under test.** If you need to mock external
-        services (Anthropic API, OAuth providers, email sending), do so —
-        but never mock the function whose AC you're testing.
-      - **No tests for code that doesn't exist yet AS IF it exists.** It is OK
-        and expected for tests to import modules that don't exist (the import
-        will fail at test time — that's the desired "red" state). The dev
-        agent will create those modules to satisfy the imports.
+        `app/`, or other source directories.
+      - **No fixtures that test trivially.** `expect(true).toBe(true)` would
+        pass without proving anything.
+      - **No mocks of the system under test.** Mock external services
+        (Anthropic API, OAuth providers, email sending) where needed, but
+        never mock the function whose AC you're testing.
+      - **No tests for code that doesn't exist yet AS IF it exists.** It is
+        OK and expected for tests to import modules that don't exist yet —
+        the import will fail at test time, which is the correct red state.
 
       ## For greenfield tasks (e.g., scaffolding)
 
       If the task is "set up the project," there's nothing for unit tests to
-      target yet. In that case, write:
-      - A trivial Vitest test (`tests/scaffolding.test.ts`) that imports a
-        well-known module (e.g., `import { describe } from 'vitest'`) and
-        asserts something true about the test environment. This proves Vitest
+      target yet. Write:
+      - A trivial Vitest test (`tests/<task-id>/scaffolding.test.ts`) that
+        imports a well-known module (e.g., `import { describe } from 'vitest'`)
+        and asserts something true about the test environment. Proves Vitest
         is wired correctly.
-      - A simple Playwright test (`e2e/scaffolding.spec.ts`) that visits
+      - A Playwright test (`e2e/<task-id>/scaffolding.spec.ts`) that visits
         `http://localhost:5173/` (Vite default) and asserts a 200 response.
-        This proves the dev server starts.
+        Proves the dev server starts.
 
       ## Narration
 
       Tell the user what you're doing as you work:
       - which ACs you're translating into which kinds of tests
-      - any architectural decisions (e.g., "I'll use a shared test fixture
-        in tests/fixtures/users.ts because multiple tests need authenticated
-        users")
-      - any gaps you noticed in the task description that you're flagging
-        but not blocking on
-
-      The user is watching live. Be specific.
+      - any architectural decisions
+      - any gaps you noticed in the task description
 
       ## When done
 
-      Stop. Do not commit, do not push, do not transition the ticket — those
-      are downstream nodes. Output a one-line status:
+      Output a one-line status:
 
           Wrote N test files: <list>.
 

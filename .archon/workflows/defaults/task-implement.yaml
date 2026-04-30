@@ -139,9 +139,19 @@ nodes:
       - "Bash(tsc:*)"
       - "Bash(eslint:*)"
     prompt: |
-      Read `$ARTIFACTS_DIR/task-context.md` and write code that satisfies
-      its acceptance criteria. Reference `$ARTIFACTS_DIR/parent-attachments.md`
-      for the project's tech stack and conventions. Commit when done.
+      Your task is to write code that satisfies the acceptance criteria in
+      `$ARTIFACTS_DIR/task-context.md`.
+
+      Inputs:
+      - `$ARTIFACTS_DIR/task-context.md` — the task summary, description, and
+        acceptance criteria.
+      - `$ARTIFACTS_DIR/parent-attachments.md` — the project's tech stack
+        and conventions (TechSpec, DesignDoc, STYLE_GUIDE, etc.).
+      - The current branch checkout (cwd is the codebase). Read what already
+        exists before writing.
+
+      Output: commits on the current branch that satisfy every acceptance
+      criterion. Commit when done.
 
   - id: validate-1
     depends_on: [ dev-attempt-1 ]
@@ -216,15 +226,22 @@ nodes:
       - "Bash(tsc:*)"
       - "Bash(eslint:*)"
     prompt: |
-      Read `$ARTIFACTS_DIR/task-context.md` and write code that satisfies
-      its acceptance criteria. Reference `$ARTIFACTS_DIR/parent-attachments.md`
-      for the project's tech stack and conventions.
+      Your task is to write code that satisfies the acceptance criteria in
+      `$ARTIFACTS_DIR/task-context.md`.
 
-      `$ARTIFACTS_DIR/feedback.json` exists — your prior implementation didn't
-      fully satisfy the ACs. Read its content to understand what's missing, then
-      address it.
+      Inputs:
+      - `$ARTIFACTS_DIR/task-context.md` — the task summary, description, and
+        acceptance criteria.
+      - `$ARTIFACTS_DIR/parent-attachments.md` — the project's tech stack
+        and conventions.
+      - `$ARTIFACTS_DIR/feedback.json` — a structured report of which
+        acceptance criteria are not yet satisfied by the current branch.
+        Read it and address what it reports.
+      - The current branch checkout (cwd is the codebase). Read what already
+        exists before writing.
 
-      Commit when done.
+      Output: commits on the current branch that close every gap reported in
+      `feedback.json`. Commit when done.
 
   - id: validate-2
     depends_on: [ dev-attempt-2 ]
@@ -241,17 +258,29 @@ nodes:
     when: "$validate-1.output.passed == 'true' || $validate-2.output.passed
       == 'true'"
     prompt: |
-      The implementation for `$decode.output.issue_key` is complete. Update
-      user-facing docs to reflect what shipped. Read the diff with
-      `git diff origin/main` and `$ARTIFACTS_DIR/task-context.md`.
+      Your task is to update user-facing documentation to reflect the changes
+      on this branch.
 
-      You may write only `README.md`, `CHANGELOG.md`, and `docs/**/*.md`.
-      Don't touch source, tests, or package files.
+      Inputs:
+      - `git diff origin/main` — the source changes that need to be
+        documented.
+      - `$ARTIFACTS_DIR/task-context.md` — the task summary, description, and
+        acceptance criteria. Use it to understand the user-visible intent of
+        the changes (not just what files moved).
+      - `$decode.output.issue_key` — the Jira key to reference in the
+        CHANGELOG entry.
 
-      Always add a CHANGELOG entry referencing `$decode.output.issue_key`
-      (create the file if missing). Update README only if the changes affect
-      a user/developer setting up the project (new commands, env vars,
-      dependencies, setup steps).
+      Output:
+      - Always add a CHANGELOG entry referencing the issue key. Create
+        `CHANGELOG.md` if missing.
+      - Update `README.md` only if the changes affect how a user/developer
+        sets up or uses the project (new commands, env vars, dependencies,
+        setup steps).
+      - Update or add entries under `docs/**/*.md` for any
+        feature/setting/concept the diff introduces.
+
+      Constraint: write only `README.md`, `CHANGELOG.md`, and `docs/**/*.md`.
+      Do not touch source, tests, or package files.
 
       Commit only the docs files you touched.
 
