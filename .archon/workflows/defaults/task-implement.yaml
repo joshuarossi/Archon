@@ -620,7 +620,13 @@ nodes:
   # cannot run test runners. The fix-implementation cannot decide test
   # failures are "pre-existing" because it cannot observe them.
   - id: implement-fixes
-    command: archon-implement-review-fixes
+    # Our own fix-implementer (.archon/commands/task-implement-fixes.md), not
+    # the bundled archon-implement-review-fixes. The bundled command is built
+    # for human-in-the-loop workflows: it fixes only CRITICAL/HIGH and treats
+    # MEDIUM/LOW as "for the user to decide." Our pipeline is autonomous, so
+    # we want every actual issue (any severity) fixed in the same step,
+    # leaving only literal questions ("do you want X or Y?") for humans.
+    command: task-implement-fixes
     depends_on: [ parse-synthesis ]
     when: "$parse-synthesis.output.decision == 'changes_requested'"
     context: fresh
