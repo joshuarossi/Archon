@@ -330,18 +330,19 @@ nodes:
     when: "$validate-2.output.passed == 'false'"
     loop:
       max_iterations: 5
-      # Two ways to exit the loop, either is sufficient:
-      #   1. The agent declares completion by emitting <COMPLETE>...</COMPLETE>
-      #      (or any matching XML tag wrapping COMPLETE). This is how the
-      #      agent says "I think I'm done."
-      #   2. The bash terminator runs validation; exit 0 = loop done, exit 1 =
-      #      keep iterating. This is the deterministic verifier — even if the
-      #      agent says it's done, if validation fails we keep going.
+      # Two ways to exit the loop, either is sufficient (Archon's loop
+      # uses OR semantics: completionDetected = signalDetected || bashComplete):
+      #   1. The agent emits <COMPLETE>...</COMPLETE> on its last line
+      #      (this is how it says "I'm done writing code for this iteration").
+      #   2. The until_bash script runs validation and exits 0.
       #
-      # In practice the agent emits COMPLETE first; if validation disagrees
-      # the loop re-invokes it on the next iteration with fresh feedback.
-      # If max_iterations is reached with neither path triggering, the loop
-      # node ends in state: failed.
+      # Either trigger ends the loop. A premature COMPLETE (agent says done
+      # but validation actually still fails) is caught downstream: the
+      # validate-loop node re-runs validation, emits passed=false, and
+      # generate-docs's `when:` clause skips the rest of the chain — no
+      # broken code gets shipped. If max_iterations is hit with neither
+      # path triggering, the loop ends in state: failed and the chain also
+      # cleanly exits via cascading skips.
       until: COMPLETE
       until_bash: |
         set -uo pipefail
