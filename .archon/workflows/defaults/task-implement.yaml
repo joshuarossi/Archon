@@ -312,11 +312,84 @@ nodes:
       set -euo pipefail
       bash /home/user/Archon/.archon/scripts/task-run-validation.sh
 
+  # ─── Last-resort iterative dev loop (only fires when both validates failed) ──
+  # Two explicit retries with the cage didn't converge. Drop into a loop node
+  # that re-invokes the dev agent up to 5 more times, with task-run-validation.sh
+  # as the until_bash terminator. Loop exits as soon as validation passes (exit 0)
+  # or hits max_iterations (state: failed → downstream skips through to
+  # generate-docs's ANY-passed `when:` clause, which leaves the ticket without a
+  # PR; future improvement: surface to a human at that point).
+  #
+  # CAGE LIMITATION: Archon's loop nodes strip LOOP_NODE_AI_FIELDS, so
+  # `denied_tools` and `hooks` defined here would be silently dropped. We
+  # accept that — by the time we're here, two cage-enforced attempts already
+  # failed; the loop's job is converging on something that passes the gates.
+  # The prompt's imperative rules are the only enforcement.
+  - id: dev-attempt-loop
+    depends_on: [ validate-2 ]
+    when: "$validate-2.output.passed == 'false'"
+    loop:
+      max_iterations: 5
+      # The bash terminator is the load-bearing gate — it actually re-runs
+      # validation and decides whether to continue. The `until` signal
+      # string is also required by the schema; setting it to an unlikely
+      # token that the agent should not accidentally emit. completion =
+      # signalDetected || bashComplete, so either path can end the loop.
+      until: __ARCHON_LOOP_AGENT_DECLARED_DONE__
+      until_bash: |
+        set -uo pipefail
+        bash /home/user/Archon/.archon/scripts/task-run-validation.sh > /dev/null 2>&1
+        passed=$(jq -r '.overall // "failed"' "$ARTIFACTS_DIR/feedback.json" 2>/dev/null || echo failed)
+        if [ "$passed" = "passed" ]; then
+          exit 0
+        fi
+        exit 1
+      prompt: |
+        Your task is to write code that satisfies every acceptance criterion
+        in `$ARTIFACTS_DIR/task-context.md`, AND fix every failure listed in
+        `$ARTIFACTS_DIR/feedback.json`.
+
+        Inputs:
+        - `$ARTIFACTS_DIR/task-context.md` — the task summary, description,
+          and acceptance criteria. This is the spec.
+        - `$ARTIFACTS_DIR/parent-attachments.md` — the project's tech stack
+          and conventions.
+        - `$ARTIFACTS_DIR/feedback.json` — quality-gate results from the
+          most recent validation pass. Each entry that says "failed" is a
+          thing for you to fix. After your iteration, validation runs again
+          and feedback.json is rewritten — read it fresh each iteration.
+        - The current branch checkout (cwd is the codebase).
+
+        RULES (no ambiguity, no exceptions):
+        - DO NOT READ TESTS. Never open files under `tests/`, `test/`,
+          `e2e/`, `__tests__/`, or matching `*.test.*` / `*.spec.*`.
+        - DO NOT WRITE OR EDIT TESTS. Never create or modify test files,
+          test fixtures, or test configs (vitest.config, playwright.config,
+          jest.config).
+        - DO NOT RUN TESTS. Never invoke `npm test`, `npm run test*`,
+          `vitest`, `playwright`, `jest`, or any test runner — by any path.
+        - DO NOT ASK. You have one job, do it.
+        - WRITE CODE that addresses each "failed" entry in feedback.json
+          and satisfies the acceptance criteria, then COMMIT, then FINISH
+          the iteration. Validation runs after — if it still fails, the
+          loop re-invokes you with fresh feedback.
+
+  # ─── Materialize a final feedback.json after the loop converges ──
+  # The loop's until_bash ran validation many times, but the LAST validation
+  # the loop performed only updated feedback.json once. This node re-runs the
+  # validation one more time and emits its standard JSON output so generate-docs
+  # and downstream gates have a node to reference (`$validate-loop.output.passed`).
+  - id: validate-loop
+    depends_on: [ dev-attempt-loop ]
+    bash: |
+      set -euo pipefail
+      bash /home/user/Archon/.archon/scripts/task-run-validation.sh
+
   - id: generate-docs
-    depends_on: [ validate-1, validate-2 ]
+    depends_on: [ validate-1, validate-2, validate-loop ]
     trigger_rule: all_done
     when: "$validate-1.output.passed == 'true' || $validate-2.output.passed
-      == 'true'"
+      == 'true' || $validate-loop.output.passed == 'true'"
     prompt: |
       Your task is to update user-facing documentation to reflect the changes
       on this branch.
