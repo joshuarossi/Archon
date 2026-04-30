@@ -160,6 +160,10 @@ nodes:
 
       4. **Test devDependencies** in `package.json` if missing
          (vitest, @vitest/ui, playwright, @playwright/test). Be minimal.
+         Install any necessary dependencies that your testing approach
+         requires (run `npm install`, fetch browser binaries, build
+         fixtures, etc.) — your tests must be able to run as soon as you
+         finish.
 
       5. **Required npm scripts in `package.json`**:
             - `"test"`: runs Vitest (e.g., `"vitest run"`)
