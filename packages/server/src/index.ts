@@ -13,7 +13,7 @@ import '@archon/paths/strip-cwd-env-boot';
 import { config } from 'dotenv';
 import { resolve } from 'path';
 import { existsSync } from 'fs';
-import { BUNDLED_IS_BINARY } from '@archon/paths';
+import { BUNDLED_IS_BINARY, getArchonEnvPath } from '@archon/paths';
 
 // In dev/source mode, load the repo root .env (platform tokens, API keys, etc.)
 // import.meta.dir is frozen at build time, so skip in compiled binaries.
@@ -28,17 +28,12 @@ if (envPath) {
   }
 }
 
-// Load ~/.archon/.env with override — Archon's config always wins over any
-// Bun-auto-loaded CWD vars. In binary mode this is the single source of truth.
-// In dev mode it overrides CWD vars for keys like DATABASE_URL.
-const globalEnvPath = resolve(process.env.HOME ?? '~', '.archon', '.env');
-if (existsSync(globalEnvPath)) {
-  const globalResult = config({ path: globalEnvPath, override: true });
-  if (globalResult.error) {
-    console.error(`Failed to load .env from ${globalEnvPath}: ${globalResult.error.message}`);
-    console.error('Hint: Check for syntax errors in your ~/.archon/.env file.');
-  }
-}
+// Load archon-owned env from ~/.archon/.env (user scope) and <cwd>/.archon/.env
+// (repo scope, wins over user) with override: true. Keeps the server in sync
+// with the CLI — see packages/paths/src/env-loader.ts and the three-path model
+// (#1302 / #1303).
+import { loadArchonEnv } from '@archon/paths/env-loader';
+loadArchonEnv(process.cwd());
 
 // CLAUDECODE=1 warning is emitted inside stripCwdEnv() (boot import above)
 // BEFORE the marker is deleted from process.env. No duplicate warning here.
@@ -179,7 +174,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<void> {
           'Or set CODEX_ID_TOKEN + CODEX_ACCESS_TOKEN in .env',
           'See .env.example for all options',
         ],
-        envFile: BUNDLED_IS_BINARY ? globalEnvPath : envPath,
+        envFile: BUNDLED_IS_BINARY ? getArchonEnvPath() : envPath,
       },
       'no_ai_credentials'
     );
@@ -258,6 +253,11 @@ export async function startServer(opts: ServerOptions = {}): Promise<void> {
   await webAdapter.start();
   persistence.startPeriodicFlush();
 
+  // Mutable — pushed to as each adapter starts, read by the /api/health endpoint.
+  // Must be a live reference because Telegram starts after the HTTP listener begins
+  // accepting requests, so a snapshot taken at registration time would miss it.
+  const activePlatforms: string[] = ['Web'];
+
   // Platform adapters (skipped in CLI serve mode or when not configured)
   let github: GitHubAdapter | null = null;
   let gitea: GiteaAdapter | null = null;
@@ -297,6 +297,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<void> {
         botMention
       );
       await github.start();
+      activePlatforms.push('GitHub');
     } else {
       getLog().info('github_adapter_skipped');
     }
@@ -313,6 +314,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<void> {
         giteaBotMention
       );
       await gitea.start();
+      activePlatforms.push('Gitea');
     } else {
       getLog().info('gitea_adapter_skipped');
     }
@@ -329,6 +331,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<void> {
         gitlabBotMention
       );
       await gitlab.start();
+      activePlatforms.push('GitLab');
     } else {
       getLog().info('gitlab_adapter_skipped');
     }
@@ -415,7 +418,24 @@ export async function startServer(opts: ServerOptions = {}): Promise<void> {
           .catch(createMessageErrorHandler('Discord', discordAdapter, conversationId));
       });
 
-      await discord.start();
+      // Don't let a Discord login failure (bad token, missing privileged
+      // intents, etc.) bring down the whole server — users running
+      // `archon serve` for the web UI shouldn't lose it because of an
+      // unrelated bot misconfiguration. See #1365.
+      try {
+        await discord.start();
+        activePlatforms.push('Discord');
+      } catch (error) {
+        const err = error as Error;
+        const isPrivilegedIntentError = err.message?.includes('disallowed intents');
+        const hint = isPrivilegedIntentError
+          ? 'Enable "Message Content Intent" in the Discord Developer Portal ' +
+            '(your application > Bot > Privileged Gateway Intents) and restart, ' +
+            'or unset DISCORD_BOT_TOKEN if you do not want the Discord adapter.'
+          : 'Verify DISCORD_BOT_TOKEN is valid, or unset it to disable the Discord adapter.';
+        getLog().error({ err, hint }, 'discord.start_failed_continuing_without_adapter');
+        discord = null;
+      }
     } else {
       getLog().info('discord_adapter_skipped');
     }
@@ -471,6 +491,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<void> {
       });
 
       await slack.start();
+      activePlatforms.push('Slack');
     } else {
       getLog().info('slack_adapter_skipped');
     }
@@ -489,7 +510,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<void> {
   });
 
   // Register Web UI API routes
-  registerApiRoutes(app, webAdapter, lockManager);
+  registerApiRoutes(app, webAdapter, lockManager, activePlatforms);
 
   // GitHub webhook endpoint
   if (github) {
@@ -679,6 +700,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<void> {
 
     try {
       await telegramAdapter.start();
+      activePlatforms.push('Telegram');
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));
       getLog().error({ err: error, errorType: error.constructor.name }, 'telegram.start_failed');

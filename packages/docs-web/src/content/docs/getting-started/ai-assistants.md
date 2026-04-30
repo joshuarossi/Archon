@@ -60,6 +60,8 @@ If neither is set in a compiled binary, Archon throws with install instructions 
 
 The Claude Agent SDK accepts either the native compiled binary or a JS `cli.js`.
 
+**Dev mode override:** when running from source (`bun run dev:server`), the SDK auto-resolves its bundled per-platform binary by default. Set `CLAUDE_BIN_PATH` if you need to override that — most commonly on glibc Linux where the SDK picks the musl variant first and fails to spawn. Config-file `claudeBinaryPath` is intentionally binary-mode-only (per-repo, not per-machine).
+
 **Typical paths by install method:**
 
 | Install method | Typical executable path |
@@ -229,7 +231,7 @@ DEFAULT_AI_ASSISTANT=codex
 
 ## Pi (Community Provider)
 
-**One adapter, ~20 LLM backends.** Pi (`@mariozechner/pi-coding-agent`) is a community-maintained coding-agent harness that Archon integrates as the first community provider. It unlocks Anthropic, OpenAI, Google (Gemini + Vertex), Groq, Mistral, Cerebras, xAI, OpenRouter, Hugging Face, and more under a single `provider: pi` entry.
+**One adapter, ~20 LLM backends.** Pi (`@mariozechner/pi-coding-agent`) is a community-maintained coding-agent harness that Archon integrates as the first community provider. It unlocks Anthropic, OpenAI, Google (Gemini + Vertex), Groq, Mistral, Cerebras, xAI, OpenRouter, Hugging Face, and local inference (LM Studio, ollama, llamacpp, custom OpenAI-compatible endpoints registered in `~/.pi/agent/models.json`) under a single `provider: pi` entry.
 
 Pi is registered as `builtIn: false` — it validates the community-provider seam rather than being a core-team-maintained option. If it proves stable and valuable it may be promoted to `builtIn: true` later.
 
@@ -262,7 +264,68 @@ Pi supports both OAuth subscriptions and API keys. Archon's adapter reads your e
 | `openrouter` | `OPENROUTER_API_KEY` |
 | `huggingface` | `HUGGINGFACE_API_KEY` |
 
-Additional Pi backends exist (Azure, Bedrock, Vertex, etc.) — file an issue if you need them wired.
+Additional cloud backends exist (Azure, Bedrock, Vertex, etc.) — file an issue if you need an env-var shortcut wired for them.
+
+**Local / custom providers (no credentials needed):**
+
+Providers that aren't in the env-var table above (LM Studio, ollama, llamacpp, custom OpenAI-compatible endpoints) work without any Archon-side configuration. Register them in `~/.pi/agent/models.json` per Pi's own docs and reference them as `<pi-provider-id>/<model-id>`:
+
+```yaml
+# .archon/config.yaml
+assistants:
+  pi:
+    model: lm-studio/qwen2.5-coder-14b   # whatever ID you registered with Pi
+```
+
+Archon logs an info-level `pi.auth_missing` event when no credentials are found and continues — Pi's SDK then connects directly to the local endpoint defined in `models.json`. If the provider does require auth (a less-common cloud backend not in the env-var table) the SDK call fails downstream; the `pi.auth_missing` breadcrumb in the log lets you trace it back to a missing env-var mapping.
+
+### Extensions (on by default)
+
+A major reason to pick Pi is its **extension ecosystem**: community packages (installed via `pi install npm:<package>`) and your own local ones that hook into the agent's lifecycle. Extensions can intercept tool calls, gate execution on human review, post to external systems, render UIs — anything the Pi extension API exposes.
+
+Archon turns extensions **on by default**. To opt out in `.archon/config.yaml`:
+
+```yaml
+assistants:
+  pi:
+    enableExtensions: false   # skip extension discovery entirely
+    # interactive: false       # keep extensions loaded, but give them no UI bridge
+```
+
+Most extensions need three config surfaces:
+
+| Surface | Purpose |
+|---|---|
+| `extensionFlags` | Per-extension feature flags (maps 1:1 to Pi's `--flag` CLI switches) |
+| `env` | Env vars the extension reads at runtime (managed via `.archon/config.yaml` or the Web UI codebase env panel) |
+| Workflow-level `interactive: true` | Required for **approval-gate extensions** on the web UI — forces foreground execution so the user can respond |
+
+**Example — [plannotator](https://github.com/dmcglinn/plannotator) (human-in-the-loop plan review):**
+
+```bash
+# One-time install into your Pi home
+pi install npm:@plannotator/pi-extension
+```
+
+```yaml
+# .archon/config.yaml
+assistants:
+  pi:
+    model: anthropic/claude-haiku-4-5
+    extensionFlags:
+      plan: true              # enables the plannotator "plan" flag
+    env:
+      PLANNOTATOR_REMOTE: "1" # exposes the review URL on 127.0.0.1:19432 so you can open it from anywhere
+```
+
+```yaml
+# .archon/workflows/my-piv.yaml
+name: my-piv
+provider: pi
+interactive: true             # plannotator gates the node on human approval — required on web UI
+```
+
+When the node runs, plannotator prints a review URL and blocks until you click approve/deny in the browser. Archon's CLI/SSE batch buffer flushes that URL to you immediately so you never get stuck waiting on a node that silently wants input.
 
 ### Model reference format
 
@@ -304,15 +367,17 @@ nodes:
 
 | Feature | Support | YAML field |
 |---|---|---|
+| Extensions (community + local) | ✅ (default on) | `enableExtensions: false` to disable; `interactive: false` to load without UI bridge; `extensionFlags: { <name>: true }` per extension |
 | Session resume | ✅ | automatic (Archon persists `sessionId`) |
 | Tool restrictions | ✅ | `allowed_tools` / `denied_tools` (read, bash, edit, write, grep, find, ls) |
 | Thinking level | ✅ | `effort: low\|medium\|high\|max` (max → xhigh) |
 | Skills | ✅ | `skills: [name]` (searches `.agents/skills`, `.claude/skills`, user-global) |
+| Inline sub-agents | ❌ | `agents:` is Claude-only; ignored with a warning on Pi |
 | System prompt override | ✅ | `systemPrompt:` |
 | Codebase env vars (`envInjection`) | ✅ | `.archon/config.yaml` `env:` section |
 | MCP servers | ❌ | Pi rejects MCP by design |
 | Claude-SDK hooks | ❌ | Claude-specific format |
-| Structured output | ❌ | uneven across Pi backends; v2 follow-up |
+| Structured output | ✅ (best-effort) | `output_format:` — schema is appended to the prompt and JSON is parsed out of the assistant text. Handles bare JSON, ```json```-fenced, and reasoning-model prose preambles like `Let me evaluate... {...}` (Minimax M2.x pattern). Trailing-text-interleaved cases still degrade cleanly to the missing-structured-output warning. Not SDK-enforced like Claude/Codex. |
 | Cost limits (`maxBudgetUsd`) | ❌ | tracked in result chunk, not enforced |
 | Fallback model | ❌ | not native in Pi |
 | Sandbox | ❌ | not native in Pi |

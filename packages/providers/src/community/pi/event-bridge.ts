@@ -28,13 +28,30 @@ function getLog(): ReturnType<typeof createLogger> {
  */
 export class AsyncQueue<T> implements AsyncIterable<T> {
   private readonly buffer: T[] = [];
-  private readonly waiters: ((item: T) => void)[] = [];
+  private readonly waiters: ((result: IteratorResult<T>) => void)[] = [];
   private consumed = false;
+  private closed = false;
 
   push(item: T): void {
+    if (this.closed) return;
     const waiter = this.waiters.shift();
-    if (waiter) waiter(item);
+    if (waiter) waiter({ value: item, done: false });
     else this.buffer.push(item);
+  }
+
+  /**
+   * Terminate iteration cleanly. Drains any pending waiters with
+   * `{ done: true }` so the consumer exits the `for await` loop instead of
+   * hanging forever when the producer's finally block fires before a new
+   * item arrives (e.g. consumer abort mid-iteration).
+   */
+  close(): void {
+    if (this.closed) return;
+    this.closed = true;
+    while (this.waiters.length > 0) {
+      const waiter = this.waiters.shift();
+      if (waiter) waiter({ value: undefined, done: true });
+    }
   }
 
   [Symbol.asyncIterator](): AsyncIterator<T> {
@@ -56,10 +73,12 @@ export class AsyncQueue<T> implements AsyncIterable<T> {
         yield next;
         continue;
       }
-      const item = await new Promise<T>(resolve => {
+      if (this.closed) return;
+      const result = await new Promise<IteratorResult<T>>(resolve => {
         this.waiters.push(resolve);
       });
-      yield item;
+      if (result.done) return;
+      yield result.value;
     }
   }
 }
@@ -111,7 +130,12 @@ function isAssistantMessage(m: unknown): m is AssistantMessage {
 export function buildResultChunk(messages: readonly unknown[]): MessageChunk {
   const last = [...messages].reverse().find(isAssistantMessage);
   if (!last) {
-    return { type: 'result' };
+    // agent_end fired with no assistant message in the transcript. This
+    // shouldn't happen in healthy Pi runs — surface it as a loud error
+    // rather than a silent success so orchestrators don't treat a broken
+    // session as a clean completion.
+    getLog().warn('pi.event-bridge.result_missing_assistant_message');
+    return { type: 'result', isError: true, errorSubtype: 'missing_assistant_message' };
   }
 
   const tokens = usageToTokens(last.usage);
@@ -125,6 +149,56 @@ export function buildResultChunk(messages: readonly unknown[]): MessageChunk {
     ...(isError ? { isError: true, errorSubtype: last.stopReason } : {}),
   };
   return chunk;
+}
+
+/**
+ * Attempt to parse a Pi assistant transcript as the structured-output JSON
+ * requested via `outputFormat`. Handles three common model failure modes:
+ *  - trailing/leading whitespace (always stripped)
+ *  - markdown code fences (```json ... ``` or bare ``` ... ```) that models
+ *    emit despite the "no code fences" instruction in the prompt
+ *  - prose preamble followed by a single trailing JSON object — pattern
+ *    observed on Minimax M2.7 ("Now I have all the inputs. Let me evaluate
+ *    the three gates: ... {...}"). Reasoning models tend to "think out loud"
+ *    before emitting structured output despite explicit JSON-only prompts.
+ *
+ * Returns the parsed value on success, `undefined` on any failure. Callers
+ * treat `undefined` as "structured output unavailable" and degrade via the
+ * dag-executor's existing missing-structured-output warning.
+ */
+export function tryParseStructuredOutput(text: string): unknown {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) return undefined;
+  // Strip ```json / ``` fences if present. Match only at boundaries so we
+  // don't mangle JSON strings that legitimately contain backticks.
+  const cleaned = trimmed
+    .replace(/^```(?:json)?\s*\n?/i, '')
+    .replace(/\n?\s*```\s*$/, '')
+    .trim();
+
+  // Tier 1: clean parse — fast path for fully compliant outputs.
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    // fall through
+  }
+
+  // Tier 2: scan forward to the FIRST `{` and parse from there. Recovers the
+  // preamble-then-JSON pattern reasoning models emit. A backward scan from
+  // the last `{` was considered but rejected: it silently returns the wrong
+  // object when the prose contains a brace-bearing example after the real
+  // payload (e.g. `{"actual":1}\nFor example: {"x":2}` would yield `{x:2}`),
+  // breaking the conservative-failure contract callers rely on.
+  const firstBrace = cleaned.indexOf('{');
+  if (firstBrace > 0) {
+    try {
+      return JSON.parse(cleaned.slice(firstBrace));
+    } catch {
+      // fall through
+    }
+  }
+
+  return undefined;
 }
 
 /**
@@ -216,16 +290,34 @@ export type BridgeQueueItem =
   | { kind: 'done' }
   | { kind: 'error'; error: Error };
 
+/** Lets the UI stub push notifications into the session's chunk queue. */
+export interface BridgeNotifier {
+  setEmitter(fn: ((chunk: MessageChunk) => void) | undefined): void;
+}
+
 export async function* bridgeSession(
   session: AgentSession,
   prompt: string,
-  abortSignal?: AbortSignal
+  abortSignal?: AbortSignal,
+  jsonSchema?: Record<string, unknown>,
+  uiBridge?: BridgeNotifier
 ): AsyncGenerator<MessageChunk> {
   const queue = new AsyncQueue<BridgeQueueItem>();
+  uiBridge?.setEmitter(chunk => {
+    queue.push({ kind: 'chunk', chunk });
+  });
+  // Best-effort structured-output buffer. Only accumulates when the caller
+  // requested a JSON schema; otherwise stays empty and the terminal chunk
+  // passes through untouched.
+  const wantsStructured = jsonSchema !== undefined;
+  let assistantBuffer = '';
 
   const unsubscribe = session.subscribe((event: AgentSessionEvent) => {
     try {
       for (const chunk of mapPiEvent(event)) {
+        if (wantsStructured && chunk.type === 'assistant') {
+          assistantBuffer += chunk.content;
+        }
         queue.push({ kind: 'chunk', chunk });
       }
     } catch (err) {
@@ -267,13 +359,38 @@ export async function* bridgeSession(
       // Pi's session.sessionId is always a UUID (even for in-memory); we emit
       // it unconditionally and let the caller decide whether resume is
       // meaningful (capability-gated at the registry level).
-      if (item.chunk.type === 'result' && session.sessionId) {
-        yield { ...item.chunk, sessionId: session.sessionId };
+      if (item.chunk.type === 'result') {
+        let terminal: MessageChunk = item.chunk;
+        if (session.sessionId) {
+          terminal = { ...terminal, sessionId: session.sessionId };
+        }
+        // Best-effort structured output: parse the accumulated assistant
+        // transcript as JSON and attach. On parse failure, leave it off —
+        // the dag-executor's existing dag.structured_output_missing path
+        // warns and downstream $node.output.field refs degrade to '' instead
+        // of propagating bogus data.
+        if (wantsStructured) {
+          const parsed = tryParseStructuredOutput(assistantBuffer);
+          if (parsed !== undefined) {
+            terminal = { ...terminal, structuredOutput: parsed };
+          } else {
+            getLog().warn(
+              { bufferLength: assistantBuffer.length },
+              'pi.event-bridge.structured_output_parse_failed'
+            );
+          }
+        }
+        yield terminal;
       } else {
         yield item.chunk;
       }
     }
   } finally {
+    // Close the queue first so any producer push() still in flight becomes
+    // a no-op and pending iterate() waiters resolve — otherwise a consumer
+    // abort mid-iteration would leak this generator on the promise forever.
+    queue.close();
+    uiBridge?.setEmitter(undefined);
     unsubscribe();
     if (abortSignal) {
       abortSignal.removeEventListener('abort', onAbort);

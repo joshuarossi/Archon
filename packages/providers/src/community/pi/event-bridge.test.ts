@@ -5,6 +5,7 @@ import {
   buildResultChunk,
   mapPiEvent,
   serializeToolResult,
+  tryParseStructuredOutput,
   usageToTokens,
 } from './event-bridge';
 
@@ -54,6 +55,40 @@ describe('AsyncQueue', () => {
     // but iteration only starts on `.next()`. Pi's bridge uses this pattern.
     q[Symbol.asyncIterator]();
     expect(() => q[Symbol.asyncIterator]()).toThrow(/single-consumer/);
+  });
+
+  test('close() terminates pending waiter so consumer exits loop', async () => {
+    const q = new AsyncQueue<number>();
+    const iter = q[Symbol.asyncIterator]();
+    const pending = iter.next();
+    queueMicrotask(() => q.close());
+    const result = await pending;
+    expect(result.done).toBe(true);
+  });
+
+  test('close() drains buffered items before terminating', async () => {
+    const q = new AsyncQueue<number>();
+    q.push(1);
+    q.push(2);
+    q.close();
+    const received: number[] = [];
+    for await (const n of q) received.push(n);
+    expect(received).toEqual([1, 2]);
+  });
+
+  test('push after close is a no-op (does not leak past close)', async () => {
+    const q = new AsyncQueue<number>();
+    const iter = q[Symbol.asyncIterator]();
+    q.close();
+    q.push(42); // Must not resurrect the closed queue.
+    const r = await iter.next();
+    expect(r.done).toBe(true);
+  });
+
+  test('close() is idempotent', () => {
+    const q = new AsyncQueue<number>();
+    q.close();
+    expect(() => q.close()).not.toThrow();
   });
 });
 
@@ -114,9 +149,17 @@ describe('buildResultChunk', () => {
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.01 },
   };
 
-  test('returns bare result chunk if no assistant message', () => {
-    expect(buildResultChunk([])).toEqual({ type: 'result' });
-    expect(buildResultChunk([{ role: 'user', content: [] }])).toEqual({ type: 'result' });
+  test('flags isError when no assistant message is present', () => {
+    // agent_end with no assistant message in the transcript is anomalous —
+    // must surface as an error so the orchestrator doesn't treat a broken
+    // session as a clean success.
+    const expected = {
+      type: 'result',
+      isError: true,
+      errorSubtype: 'missing_assistant_message',
+    };
+    expect(buildResultChunk([])).toEqual(expected);
+    expect(buildResultChunk([{ role: 'user', content: [] }])).toEqual(expected);
   });
 
   test('extracts usage from last assistant message', () => {
@@ -323,5 +366,106 @@ describe('mapPiEvent', () => {
         reason: 'manual',
       })
     ).toEqual([]);
+  });
+});
+
+// ─── tryParseStructuredOutput ──────────────────────────────────────────────
+
+describe('tryParseStructuredOutput', () => {
+  test('parses clean JSON object', () => {
+    expect(tryParseStructuredOutput('{"name":"alpha","count":3}')).toEqual({
+      name: 'alpha',
+      count: 3,
+    });
+  });
+
+  test('parses JSON with surrounding whitespace', () => {
+    expect(tryParseStructuredOutput('  \n{"ok":true}\n  ')).toEqual({ ok: true });
+  });
+
+  test('strips ```json fences', () => {
+    const fenced = '```json\n{"area":"web","confidence":0.9}\n```';
+    expect(tryParseStructuredOutput(fenced)).toEqual({ area: 'web', confidence: 0.9 });
+  });
+
+  test('strips bare ``` fences', () => {
+    expect(tryParseStructuredOutput('```\n{"ok":1}\n```')).toEqual({ ok: 1 });
+  });
+
+  test('parses JSON arrays', () => {
+    expect(tryParseStructuredOutput('[1,2,3]')).toEqual([1, 2, 3]);
+  });
+
+  test('returns undefined on empty string', () => {
+    expect(tryParseStructuredOutput('')).toBeUndefined();
+    expect(tryParseStructuredOutput('   ')).toBeUndefined();
+  });
+
+  test('returns undefined when model wraps JSON in prose with trailing text', () => {
+    // Caller degrades via the executor's missing-structured-output warning.
+    // Forward scan starts at the JSON object but JSON.parse rejects the
+    // trailing prose, so we fail closed rather than guess.
+    const prose =
+      'Here is the JSON you requested:\n{"ok":true}\nLet me know if you need anything else.';
+    expect(tryParseStructuredOutput(prose)).toBeUndefined();
+  });
+
+  test('parses preamble + trailing JSON (Minimax M2.7 reasoning-model pattern)', () => {
+    // Real-world failure mode observed on Minimax M2.7: the model "thinks out
+    // loud" before emitting the JSON-only output we asked for. Forward scan
+    // from the first `{` (preamble has no braces) recovers the payload.
+    const minimax =
+      'Now I have all the inputs. Let me evaluate the three gates:\n\n' +
+      '**Gate A — Direction alignment**: aligned\n' +
+      '**Gate B — Scope**: focused\n' +
+      '**Gate C — Template**: partial\n\n' +
+      '{"verdict":"review","direction_alignment":"aligned","scope_assessment":"focused","template_quality":"partial"}';
+    expect(tryParseStructuredOutput(minimax)).toEqual({
+      verdict: 'review',
+      direction_alignment: 'aligned',
+      scope_assessment: 'focused',
+      template_quality: 'partial',
+    });
+  });
+
+  test('parses preamble + trailing nested JSON via forward scan', () => {
+    // Forward scan lands on the outer `{` and JSON.parse handles the nesting.
+    const nested =
+      'Reasoning before the JSON.\n' + '{"verdict":"review","details":{"foo":1,"bar":[1,2,3]}}';
+    expect(tryParseStructuredOutput(nested)).toEqual({
+      verdict: 'review',
+      details: { foo: 1, bar: [1, 2, 3] },
+    });
+  });
+
+  test('parses preamble + JSON containing `{` inside a string value', () => {
+    // Forward scan lands on the JSON object's outer `{`; JSON.parse handles
+    // the in-string `{`. Preamble must not itself contain `{`, otherwise the
+    // forward scan would start there and fail.
+    const tricky =
+      'Brief preamble with no extra braces.\n' + '{"key":"value with { inside","ok":true}';
+    expect(tryParseStructuredOutput(tricky)).toEqual({
+      key: 'value with { inside',
+      ok: true,
+    });
+  });
+
+  test('returns undefined when prose contains a brace-bearing example after the real JSON', () => {
+    // Conservative-failure regression. A backward-scan strategy would silently
+    // return the trailing example; forward scan starts at the real payload,
+    // JSON.parse rejects the trailing prose+example, and we fail closed.
+    const withExample = '{"actual":"value"}\nFor example: {"verdict":"review"}';
+    expect(tryParseStructuredOutput(withExample)).toBeUndefined();
+  });
+
+  test('returns undefined on malformed JSON', () => {
+    expect(tryParseStructuredOutput('{not valid}')).toBeUndefined();
+    expect(tryParseStructuredOutput('{"unclosed":')).toBeUndefined();
+  });
+
+  test('preserves backticks inside JSON string values', () => {
+    // Fence stripper matches only at start/end; inner backticks must survive.
+    const withBackticks = '{"code":"run `npm test`"}';
+    expect(tryParseStructuredOutput(withBackticks)).toEqual({ code: 'run `npm test`' });
   });
 });

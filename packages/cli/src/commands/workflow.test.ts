@@ -310,7 +310,7 @@ describe('workflowListCommand', () => {
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Found 1 workflow(s)'));
   });
 
-  it('passes globalSearchPath to discoverWorkflowsWithConfig', async () => {
+  it('calls discoverWorkflowsWithConfig with (cwd, loadConfig) — home scope is internal', async () => {
     const { discoverWorkflowsWithConfig } = await import('@archon/workflows/workflow-discovery');
     (discoverWorkflowsWithConfig as ReturnType<typeof mock>).mockResolvedValueOnce({
       workflows: [],
@@ -319,11 +319,9 @@ describe('workflowListCommand', () => {
 
     await workflowListCommand('/test/path');
 
-    expect(discoverWorkflowsWithConfig).toHaveBeenCalledWith(
-      '/test/path',
-      expect.any(Function),
-      expect.objectContaining({ globalSearchPath: '/home/test/.archon' })
-    );
+    // After the globalSearchPath refactor, discovery reads ~/.archon/workflows/
+    // on every call with no option — every caller inherits home-scope for free.
+    expect(discoverWorkflowsWithConfig).toHaveBeenCalledWith('/test/path', expect.any(Function));
   });
 
   it('should throw error when discoverWorkflows fails', async () => {
@@ -865,6 +863,254 @@ describe('workflowRunCommand', () => {
       | undefined;
     const createCallsAfter = providerAfter?.create.mock.calls.length ?? 0;
     expect(createCallsAfter).toBe(createCallsBefore);
+  });
+
+  // -------------------------------------------------------------------------
+  // Stale workspace source-symlink → truthful CLI error
+  // -------------------------------------------------------------------------
+
+  it('surfaces auto-registration failures instead of claiming the repo is invalid', async () => {
+    const { discoverWorkflowsWithConfig } = await import('@archon/workflows/workflow-discovery');
+    const { registerRepository } = await import('@archon/core');
+    const conversationDb = await import('@archon/core/db/conversations');
+    const codebaseDb = await import('@archon/core/db/codebases');
+    const gitModule = await import('@archon/git');
+
+    (discoverWorkflowsWithConfig as ReturnType<typeof mock>).mockResolvedValueOnce({
+      workflows: [makeTestWorkflowWithSource({ name: 'assist', description: 'Help' })],
+      errors: [],
+    });
+    (conversationDb.getOrCreateConversation as ReturnType<typeof mock>).mockResolvedValueOnce({
+      id: 'conv-123',
+    });
+    (codebaseDb.findCodebaseByDefaultCwd as ReturnType<typeof mock>).mockResolvedValueOnce(null);
+    (gitModule.findRepoRoot as ReturnType<typeof mock>).mockResolvedValueOnce('/test/path');
+    (registerRepository as ReturnType<typeof mock>).mockRejectedValueOnce(
+      new Error(
+        'Source symlink at /home/test/.archon/workspaces/acme/widget/source already points to ' +
+          '/home/test/.archon/workspaces/widget, expected /test/path'
+      )
+    );
+
+    const error = await workflowRunCommand('/test/path', 'assist', 'hello', {}).catch(
+      err => err as Error
+    );
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toContain('Cannot create worktree: repository registration failed.');
+    expect(error.message).toContain(
+      'Remove the stale workspace entry at /home/test/.archon/workspaces/acme/widget and retry'
+    );
+    expect(error.message).not.toContain('not in a git repository');
+  });
+
+  it('surfaces auto-registration failures on --resume instead of claiming the repo is invalid', async () => {
+    const { discoverWorkflowsWithConfig } = await import('@archon/workflows/workflow-discovery');
+    const { registerRepository } = await import('@archon/core');
+    const conversationDb = await import('@archon/core/db/conversations');
+    const codebaseDb = await import('@archon/core/db/codebases');
+    const gitModule = await import('@archon/git');
+
+    (discoverWorkflowsWithConfig as ReturnType<typeof mock>).mockResolvedValueOnce({
+      workflows: [makeTestWorkflowWithSource({ name: 'assist', description: 'Help' })],
+      errors: [],
+    });
+    (conversationDb.getOrCreateConversation as ReturnType<typeof mock>).mockResolvedValueOnce({
+      id: 'conv-123',
+    });
+    (codebaseDb.findCodebaseByDefaultCwd as ReturnType<typeof mock>).mockResolvedValueOnce(null);
+    (gitModule.findRepoRoot as ReturnType<typeof mock>).mockResolvedValueOnce('/test/path');
+    (registerRepository as ReturnType<typeof mock>).mockRejectedValueOnce(
+      new Error(
+        'Source symlink at /home/test/.archon/workspaces/acme/widget/source already points to ' +
+          '/home/test/.archon/workspaces/widget, expected /test/path'
+      )
+    );
+
+    const error = await workflowRunCommand('/test/path', 'assist', 'hello', {
+      resume: true,
+    }).catch(err => err as Error);
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toContain('Cannot resume: repository registration failed.');
+    expect(error.message).toContain(
+      'Remove the stale workspace entry at /home/test/.archon/workspaces/acme/widget and retry'
+    );
+    expect(error.message).not.toContain('Not in a git repository');
+  });
+
+  it('falls back to generic workspace hint when registration error has an unrecognized shape', async () => {
+    const { discoverWorkflowsWithConfig } = await import('@archon/workflows/workflow-discovery');
+    const { registerRepository } = await import('@archon/core');
+    const conversationDb = await import('@archon/core/db/conversations');
+    const codebaseDb = await import('@archon/core/db/codebases');
+    const gitModule = await import('@archon/git');
+
+    (discoverWorkflowsWithConfig as ReturnType<typeof mock>).mockResolvedValueOnce({
+      workflows: [makeTestWorkflowWithSource({ name: 'assist', description: 'Help' })],
+      errors: [],
+    });
+    (conversationDb.getOrCreateConversation as ReturnType<typeof mock>).mockResolvedValueOnce({
+      id: 'conv-123',
+    });
+    (codebaseDb.findCodebaseByDefaultCwd as ReturnType<typeof mock>).mockResolvedValueOnce(null);
+    (gitModule.findRepoRoot as ReturnType<typeof mock>).mockResolvedValueOnce('/test/path');
+    (registerRepository as ReturnType<typeof mock>).mockRejectedValueOnce(
+      new Error("EACCES: permission denied, mkdir '/home/test/.archon/workspaces/acme'")
+    );
+
+    const error = await workflowRunCommand('/test/path', 'assist', 'hello', {}).catch(
+      err => err as Error
+    );
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toContain('Cannot create worktree: repository registration failed.');
+    expect(error.message).toContain('EACCES: permission denied');
+    // Path-separator-agnostic check: on Windows path.join normalizes to `\`,
+    // on POSIX to `/`. Assert the hint prefix + the final segment separately.
+    expect(error.message).toContain('Check your Archon workspace registration under');
+    expect(error.message).toMatch(/workspaces\b/);
+    expect(error.message).not.toContain('Remove the stale workspace entry');
+  });
+
+  // -------------------------------------------------------------------------
+  // Workflow-level `worktree.enabled` policy
+  // -------------------------------------------------------------------------
+
+  it('skips isolation when workflow YAML pins worktree.enabled: false', async () => {
+    const { discoverWorkflowsWithConfig } = await import('@archon/workflows/workflow-discovery');
+    const { executeWorkflow } = await import('@archon/workflows/executor');
+    const conversationDb = await import('@archon/core/db/conversations');
+    const codebaseDb = await import('@archon/core/db/codebases');
+    const isolation = await import('@archon/isolation');
+
+    const getIsolationProviderMock = isolation.getIsolationProvider as ReturnType<typeof mock>;
+    const providerBefore = getIsolationProviderMock.mock.results.at(-1)?.value as
+      | { create: ReturnType<typeof mock> }
+      | undefined;
+    const createCallsBefore = providerBefore?.create.mock.calls.length ?? 0;
+
+    (discoverWorkflowsWithConfig as ReturnType<typeof mock>).mockResolvedValueOnce({
+      workflows: [
+        makeTestWorkflowWithSource({
+          name: 'triage',
+          description: 'Read-only triage',
+          worktree: { enabled: false },
+        }),
+      ],
+      errors: [],
+    });
+    (conversationDb.getOrCreateConversation as ReturnType<typeof mock>).mockResolvedValueOnce({
+      id: 'conv-123',
+    });
+    (codebaseDb.findCodebaseByDefaultCwd as ReturnType<typeof mock>).mockResolvedValueOnce({
+      id: 'cb-123',
+      default_cwd: '/test/path',
+    });
+    (conversationDb.updateConversation as ReturnType<typeof mock>).mockResolvedValueOnce(undefined);
+    (executeWorkflow as ReturnType<typeof mock>).mockResolvedValueOnce({
+      success: true,
+      workflowRunId: 'run-123',
+    });
+
+    // No flags — policy alone should disable isolation
+    await workflowRunCommand('/test/path', 'triage', 'go', {});
+
+    const providerAfter = getIsolationProviderMock.mock.results.at(-1)?.value as
+      | { create: ReturnType<typeof mock> }
+      | undefined;
+    const createCallsAfter = providerAfter?.create.mock.calls.length ?? 0;
+    expect(createCallsAfter).toBe(createCallsBefore);
+  });
+
+  it('throws when workflow pins worktree.enabled: false but caller passes --branch', async () => {
+    const { discoverWorkflowsWithConfig } = await import('@archon/workflows/workflow-discovery');
+
+    (discoverWorkflowsWithConfig as ReturnType<typeof mock>).mockResolvedValueOnce({
+      workflows: [
+        makeTestWorkflowWithSource({
+          name: 'triage',
+          description: 'Read-only triage',
+          worktree: { enabled: false },
+        }),
+      ],
+      errors: [],
+    });
+
+    await expect(
+      workflowRunCommand('/test/path', 'triage', 'go', { branchName: 'feat-x' })
+    ).rejects.toThrow(/worktree\.enabled: false/);
+  });
+
+  it('throws when workflow pins worktree.enabled: false but caller passes --from', async () => {
+    const { discoverWorkflowsWithConfig } = await import('@archon/workflows/workflow-discovery');
+
+    (discoverWorkflowsWithConfig as ReturnType<typeof mock>).mockResolvedValueOnce({
+      workflows: [
+        makeTestWorkflowWithSource({
+          name: 'triage',
+          description: 'Read-only triage',
+          worktree: { enabled: false },
+        }),
+      ],
+      errors: [],
+    });
+
+    await expect(
+      workflowRunCommand('/test/path', 'triage', 'go', { fromBranch: 'dev' })
+    ).rejects.toThrow(/worktree\.enabled: false/);
+  });
+
+  it('accepts worktree.enabled: false + --no-worktree as redundant (no error)', async () => {
+    const { discoverWorkflowsWithConfig } = await import('@archon/workflows/workflow-discovery');
+    const { executeWorkflow } = await import('@archon/workflows/executor');
+    const conversationDb = await import('@archon/core/db/conversations');
+    const codebaseDb = await import('@archon/core/db/codebases');
+
+    (discoverWorkflowsWithConfig as ReturnType<typeof mock>).mockResolvedValueOnce({
+      workflows: [
+        makeTestWorkflowWithSource({
+          name: 'triage',
+          description: 'Read-only triage',
+          worktree: { enabled: false },
+        }),
+      ],
+      errors: [],
+    });
+    (conversationDb.getOrCreateConversation as ReturnType<typeof mock>).mockResolvedValueOnce({
+      id: 'conv-123',
+    });
+    (codebaseDb.findCodebaseByDefaultCwd as ReturnType<typeof mock>).mockResolvedValueOnce({
+      id: 'cb-123',
+      default_cwd: '/test/path',
+    });
+    (conversationDb.updateConversation as ReturnType<typeof mock>).mockResolvedValueOnce(undefined);
+    (executeWorkflow as ReturnType<typeof mock>).mockResolvedValueOnce({
+      success: true,
+      workflowRunId: 'run-123',
+    });
+
+    // Should not throw — redundant, not contradictory
+    await workflowRunCommand('/test/path', 'triage', 'go', { noWorktree: true });
+  });
+
+  it('throws when workflow pins worktree.enabled: true but caller passes --no-worktree', async () => {
+    const { discoverWorkflowsWithConfig } = await import('@archon/workflows/workflow-discovery');
+
+    (discoverWorkflowsWithConfig as ReturnType<typeof mock>).mockResolvedValueOnce({
+      workflows: [
+        makeTestWorkflowWithSource({
+          name: 'build',
+          description: 'Requires a worktree',
+          worktree: { enabled: true },
+        }),
+      ],
+      errors: [],
+    });
+
+    await expect(
+      workflowRunCommand('/test/path', 'build', 'go', { noWorktree: true })
+    ).rejects.toThrow(/worktree\.enabled: true/);
   });
 
   it('throws when isolation cannot be created due to missing codebase', async () => {
@@ -2270,5 +2516,53 @@ describe('workflowRunCommand — progress rendering', () => {
     await workflowRunCommand('/test/path', 'plan', 'hello', {});
 
     expect(stderrSpy).toHaveBeenCalledWith('[slow] Completed (1m30s)\n');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// extractStaleWorkspaceEntry — parser edge cases
+// ---------------------------------------------------------------------------
+
+describe('extractStaleWorkspaceEntry', () => {
+  it('extracts the workspace dir from a POSIX source-symlink error', async () => {
+    const { extractStaleWorkspaceEntry } = await import('./workflow');
+    expect(
+      extractStaleWorkspaceEntry(
+        'Source symlink at /home/user/.archon/workspaces/acme/widget/source already points to /other, expected /here'
+      )
+    ).toBe('/home/user/.archon/workspaces/acme/widget');
+  });
+
+  it('extracts the workspace dir from a Windows source-symlink error (backslash sep)', async () => {
+    const { extractStaleWorkspaceEntry } = await import('./workflow');
+    expect(
+      extractStaleWorkspaceEntry(
+        'Source symlink at C:\\Users\\me\\.archon\\workspaces\\acme\\widget\\source already points to D:\\x, expected D:\\y'
+      )
+    ).toBe('C:\\Users\\me\\.archon\\workspaces\\acme\\widget');
+  });
+
+  it('returns null when the prefix does not match (unrelated error)', async () => {
+    const { extractStaleWorkspaceEntry } = await import('./workflow');
+    expect(extractStaleWorkspaceEntry('ENOENT: no such file or directory')).toBeNull();
+  });
+
+  it('returns null when the prefix matches but the delimiter is missing', async () => {
+    const { extractStaleWorkspaceEntry } = await import('./workflow');
+    expect(
+      extractStaleWorkspaceEntry('Source symlink at /some/path (truncated message)')
+    ).toBeNull();
+  });
+
+  it('returns null when the source path has no path separator at all', async () => {
+    const { extractStaleWorkspaceEntry } = await import('./workflow');
+    expect(
+      extractStaleWorkspaceEntry('Source symlink at bareword already points to /x, expected /y')
+    ).toBeNull();
+  });
+
+  it('returns null on an empty input', async () => {
+    const { extractStaleWorkspaceEntry } = await import('./workflow');
+    expect(extractStaleWorkspaceEntry('')).toBeNull();
   });
 });

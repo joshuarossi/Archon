@@ -11,6 +11,7 @@ import {
 import { WORKFLOW_EVENT_TYPES, type WorkflowEventType } from '@archon/workflows/store';
 import { configureIsolation, getIsolationProvider } from '@archon/isolation';
 import { createLogger, getArchonHome } from '@archon/paths';
+import { join } from 'node:path';
 import { createWorkflowDeps } from '@archon/core/workflows/store-adapter';
 import { discoverWorkflowsWithConfig } from '@archon/workflows/workflow-discovery';
 import { resolveWorkflowName } from '@archon/workflows/router';
@@ -77,6 +78,57 @@ function generateConversationId(): string {
   return `cli-${String(timestamp)}-${random}`;
 }
 
+/**
+ * Parses the "Source symlink at X already points to Y, expected Z" error
+ * thrown by `createProjectSourceSymlink` in @archon/paths. Cross-package
+ * string contract — if that throw site changes wording, this parser silently
+ * stops matching. Returns the workspace dir (parent of the `source` link) so
+ * the caller can emit an exact cleanup path, or null if unrecognized.
+ */
+export function extractStaleWorkspaceEntry(message: string): string | null {
+  const prefix = 'Source symlink at ';
+  const delimiter = ' already points to ';
+  if (!message.startsWith(prefix)) return null;
+
+  const remainder = message.slice(prefix.length);
+  const delimiterIndex = remainder.indexOf(delimiter);
+  if (delimiterIndex === -1) return null;
+
+  const sourcePath = remainder.slice(0, delimiterIndex).trim();
+  const lastSeparator = Math.max(sourcePath.lastIndexOf('/'), sourcePath.lastIndexOf('\\'));
+  return lastSeparator === -1 ? null : sourcePath.slice(0, lastSeparator);
+}
+
+/**
+ * Wraps a codebase auto-registration failure for either the worktree-create or
+ * resume path. Preserves the original error message and delegates hint detail
+ * to `extractStaleWorkspaceEntry`; falls back to a workspace-root pointer when
+ * the error shape is unrecognized.
+ */
+function buildRegistrationFailureError(action: string, error: Error): Error {
+  const staleWorkspaceEntry = extractStaleWorkspaceEntry(error.message);
+  let hint: string;
+  if (staleWorkspaceEntry) {
+    hint = `Hint: Remove the stale workspace entry at ${staleWorkspaceEntry} and retry, or use --no-worktree to skip isolation.`;
+  } else {
+    // Guard against a throwing getArchonHome() (misconfigured env vars, etc.):
+    // the registration error we're wrapping is the load-bearing one — we'd
+    // rather lose the exact path in the hint than replace it with a secondary
+    // home-resolution error that masks the root cause.
+    try {
+      const workspacesPath = join(getArchonHome(), 'workspaces');
+      hint = `Hint: Check your Archon workspace registration under ${workspacesPath} and retry, or use --no-worktree to skip isolation.`;
+    } catch {
+      hint =
+        'Hint: Check your Archon workspace registration and retry, or use --no-worktree to skip isolation.';
+    }
+  }
+
+  return new Error(
+    `Cannot ${action}: repository registration failed.\nError: ${error.message}\n${hint}`
+  );
+}
+
 /** Render a workflow event to stderr as a progress line. Called only when --quiet is not set. */
 function renderWorkflowEvent(event: WorkflowEmitterEvent, verbose: boolean): void {
   switch (event.type) {
@@ -119,9 +171,9 @@ function renderWorkflowEvent(event: WorkflowEmitterEvent, verbose: boolean): voi
  */
 async function loadWorkflows(cwd: string): Promise<WorkflowLoadResult> {
   try {
-    return await discoverWorkflowsWithConfig(cwd, loadConfig, {
-      globalSearchPath: getArchonHome(),
-    });
+    // Home-scoped workflows at ~/.archon/workflows/ are discovered automatically —
+    // no option needed since the discovery helper reads them unconditionally.
+    return await discoverWorkflowsWithConfig(cwd, loadConfig);
   } catch (error) {
     const err = error as Error;
     throw new Error(
@@ -261,6 +313,37 @@ export async function workflowRunCommand(
     );
   }
 
+  // Reconcile workflow-level worktree policy with invocation flags.
+  // The workflow YAML's `worktree.enabled` pins isolation regardless of caller —
+  // a mismatch between policy and flags is a user error we surface loudly
+  // rather than silently applying one side and ignoring the other.
+  const pinnedEnabled = workflow.worktree?.enabled;
+  if (pinnedEnabled === false) {
+    if (options.branchName !== undefined) {
+      throw new Error(
+        `Workflow '${workflow.name}' sets worktree.enabled: false (runs in live checkout).\n` +
+          '  --branch requires an isolated worktree.\n' +
+          "  Drop --branch or change the workflow's worktree.enabled."
+      );
+    }
+    if (options.fromBranch !== undefined) {
+      throw new Error(
+        `Workflow '${workflow.name}' sets worktree.enabled: false (runs in live checkout).\n` +
+          '  --from/--from-branch only applies when a worktree is created.\n' +
+          "  Drop --from or change the workflow's worktree.enabled."
+      );
+    }
+    // --no-worktree is redundant but not contradictory — silently accept.
+  } else if (pinnedEnabled === true) {
+    if (options.noWorktree) {
+      throw new Error(
+        `Workflow '${workflow.name}' sets worktree.enabled: true (requires a worktree).\n` +
+          '  --no-worktree conflicts with the workflow policy.\n' +
+          "  Drop --no-worktree or change the workflow's worktree.enabled."
+      );
+    }
+  }
+
   console.log(`Running workflow: ${workflowName}`);
   console.log(`Working directory: ${cwd}`);
   console.log('');
@@ -285,6 +368,7 @@ export async function workflowRunCommand(
   // Try to find a codebase for this directory
   let codebase = null;
   let codebaseLookupError: Error | null = null;
+  let codebaseRegistrationError: Error | null = null;
   try {
     codebase = await codebaseDb.findCodebaseByDefaultCwd(cwd);
   } catch (error) {
@@ -330,6 +414,7 @@ export async function workflowRunCommand(
         }
       } catch (error) {
         const err = error as Error;
+        codebaseRegistrationError = err;
         getLog().warn(
           { err, errorType: err.constructor.name, repoRoot },
           'cli.codebase_auto_registration_failed'
@@ -353,6 +438,9 @@ export async function workflowRunCommand(
             `Error: ${codebaseLookupError.message}\n` +
             'Hint: Check your database connection before using --resume.'
         );
+      }
+      if (codebaseRegistrationError) {
+        throw buildRegistrationFailureError('resume', codebaseRegistrationError);
       }
       throw new Error(
         'Cannot resume: Not in a git repository.\n' +
@@ -403,8 +491,14 @@ export async function workflowRunCommand(
     console.log('');
   }
 
-  // Default to worktree isolation unless --no-worktree or --resume
-  const wantsIsolation = !options.resume && !options.noWorktree;
+  // Default to worktree isolation unless --no-worktree or --resume.
+  // Workflow YAML `worktree.enabled` pins the decision — mismatches with CLI
+  // flags are rejected above, so by this point the policy (if set) and flags
+  // agree. `--resume` reuses an existing worktree and takes precedence over
+  // the pinned policy to avoid disturbing a paused run.
+  const flagWantsIsolation = !options.resume && !options.noWorktree;
+  const wantsIsolation =
+    !options.resume && pinnedEnabled !== undefined ? pinnedEnabled : flagWantsIsolation;
 
   if (wantsIsolation && codebase) {
     // Auto-generate branch identifier from workflow name + timestamp when --branch not provided
@@ -506,6 +600,9 @@ export async function workflowRunCommand(
           `Error: ${codebaseLookupError.message}\n` +
           'Hint: Check your database connection, or use --no-worktree to skip isolation.'
       );
+    }
+    if (codebaseRegistrationError) {
+      throw buildRegistrationFailureError('create worktree', codebaseRegistrationError);
     }
     throw new Error(
       'Cannot create worktree: not in a git repository.\n' +

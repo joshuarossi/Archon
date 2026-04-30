@@ -39,6 +39,47 @@ export interface PiProviderDefaults {
   [key: string]: unknown;
   /** Default model ref in '<pi-provider-id>/<model-id>' format, e.g. 'google/gemini-2.5-pro' */
   model?: string;
+  /**
+   * Opt-in to Pi's extension discovery (tools + lifecycle hooks from community
+   * packages — see https://shittycodingagent.ai/packages). When true, Pi loads
+   * extensions from `~/.pi/agent/extensions/`, `~/.pi/agent/settings.json`
+   * packages, AND the workflow's cwd (`<cwd>/.pi/extensions/`,
+   * `<cwd>/.pi/settings.json`). The cwd scope is the risky one — a workflow
+   * running against an untrusted repo can auto-load whatever extension code
+   * that repo ships. Disabled by default to preserve the "Archon is source of
+   * truth" trust boundary. Flip to true only on hosts whose workflows run
+   * against repos you trust.
+   * @default false
+   */
+  enableExtensions?: boolean;
+  /**
+   * Bind an `ExtensionUIContext` so extensions see `ctx.hasUI === true` and
+   * `ctx.ui.notify()` forwards into the chunk stream. Ignored unless
+   * `enableExtensions` is true.
+   * @default false
+   */
+  interactive?: boolean;
+  /**
+   * Flag values passed to Pi's ExtensionRunner before `session_start`,
+   * equivalent to `pi --<name>` / `pi --<name>=<value>` on the CLI.
+   * Unknown keys are ignored. Only applied when `enableExtensions` is true.
+   * @default undefined
+   */
+  extensionFlags?: Record<string, boolean | string>;
+  /**
+   * Environment variables injected into `process.env` at session start so
+   * in-process extensions (which read `process.env` directly) pick them up.
+   * Existing `process.env` entries are NOT overridden — shell env wins over
+   * config. Use for extension-config vars like `PLANNOTATOR_REMOTE=1` that
+   * must be present before the extension's `session_start` hook runs.
+   *
+   * Note: this differs from `requestOptions.env` (codebase-scoped env vars),
+   * which is per-request and only injected into bash subprocesses. Use
+   * codebase env vars for secrets that vary per project; use `assistants.pi.env`
+   * for extension wiring that's global to the Pi provider.
+   * @default undefined
+   */
+  env?: Record<string, string>;
 }
 
 /** Generic per-provider defaults bag used by config surfaces and UI. */
@@ -62,7 +103,15 @@ export interface TokenUsage {
  * Discriminated union with per-type required fields for type safety.
  */
 export type MessageChunk =
-  | { type: 'assistant'; content: string }
+  | {
+      type: 'assistant';
+      content: string;
+      /** When true, batch-mode adapters flush pending content and this chunk
+       *  to the platform immediately. Used by Pi's `notify()` so URLs the
+       *  user must act on (e.g. plannotator review) surface before the node
+       *  blocks for input. */
+      flush?: boolean;
+    }
   | { type: 'system'; content: string }
   | { type: 'thinking'; content: string }
   | {
@@ -72,6 +121,8 @@ export type MessageChunk =
       structuredOutput?: unknown;
       isError?: boolean;
       errorSubtype?: string;
+      /** SDK-provided error detail strings. Populated when isError is true. */
+      errors?: string[];
       cost?: number;
       stopReason?: string;
       numTurns?: number;
@@ -123,6 +174,32 @@ export interface NodeConfig {
   mcp?: string;
   hooks?: unknown;
   skills?: string[];
+  /**
+   * Inline sub-agent definitions (keyed by kebab-case agent ID).
+   *
+   * Intentional hand-written duplicate of `agentDefinitionSchema` (authoritative
+   * source: `@archon/workflows/schemas/dag-node`). Normally we follow the
+   * project rule "derive types from Zod via `z.infer`, never write parallel
+   * interfaces" — broken here on purpose: `@archon/providers/types` is the
+   * contract subpath consumed by `@archon/workflows`, so importing from
+   * `@archon/workflows` would create a circular dependency.
+   *
+   * Drift risk: when the schema gains a field, this shape must be updated
+   * by hand. Follow-up work: extract the agent-definition contract to a
+   * lower-tier package so `z.infer` can be used end-to-end (#1276).
+   */
+  agents?: Record<
+    string,
+    {
+      description: string;
+      prompt: string;
+      model?: string;
+      tools?: string[];
+      disallowedTools?: string[];
+      skills?: string[];
+      maxTurns?: number;
+    }
+  >;
   allowed_tools?: string[];
   denied_tools?: string[];
   effort?: string;
@@ -158,6 +235,8 @@ export interface ProviderCapabilities {
   mcp: boolean;
   hooks: boolean;
   skills: boolean;
+  /** Whether the provider supports inline sub-agent definitions (Claude SDK's options.agents). */
+  agents: boolean;
   toolRestrictions: boolean;
   structuredOutput: boolean;
   envInjection: boolean;
@@ -185,13 +264,6 @@ export interface ProviderRegistration {
 
   /** Static capability declaration — used for dag-executor warnings */
   capabilities: ProviderCapabilities;
-
-  /**
-   * Model compatibility check. Returns true if the model string
-   * is valid for this provider. Used by workflow validation and
-   * provider inference from model names.
-   */
-  isModelCompatible: (model: string) => boolean;
 
   /** Whether this is a built-in (maintained by core team) or community provider */
   builtIn: boolean;
