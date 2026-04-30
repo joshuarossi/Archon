@@ -141,10 +141,14 @@ interface SearchResponse {
 // Exclude tickets bearing `archon-blocked-pending` from promotion. That label
 // is the human-controlled "leave this alone for now" pause signal — when it
 // is set, a ticket sits in Backlog forever (no router event fires) until a
-// human removes the label by hand. The sweep simply doesn't see those rows,
-// so no failed task-tests run is produced and no comment noise is created.
+// human removes the label by hand.
+//
+// JQL gotcha: `labels != X` is interpreted as "labels exist AND none equal
+// X", which silently EXCLUDES tickets with no labels at all. The correct
+// "doesn't have this specific label" form is `(labels is EMPTY OR labels
+// not in (X))` — accepts both unlabeled and differently-labeled rows.
 const jql = encodeURIComponent(
-  `project = ${project} AND status = "Backlog" AND issuetype != Epic AND labels != "archon-blocked-pending"`,
+  `project = ${project} AND status = "Backlog" AND issuetype != Epic AND (labels is EMPTY OR labels not in ("archon-blocked-pending"))`,
 );
 const searchPath = `/rest/api/3/search/jql?jql=${jql}&fields=issuelinks,issuetype,status,labels&maxResults=200`;
 const searchResult = await jiraGet<SearchResponse>(searchPath);
