@@ -1,0 +1,41 @@
+name: task-done
+description: Handle a non-Epic Jira ticket transitioning to Done — remove its outward Blocks links, promote any newly-unblocked tickets, roll up the parent Epic if all children Done.
+
+# Pure Jira API — no codebase work, no checkout.
+worktree:
+  enabled: false
+
+nodes:
+  - id: decode
+    bash: |
+      set -euo pipefail
+      bun -e '
+        const raw = process.argv[1];
+        if (!raw) {
+          throw new Error("Missing base64 payload in $ARGUMENTS");
+        }
+        const json = Buffer.from(raw, "base64").toString("utf8");
+        const obj = JSON.parse(json);
+        process.stdout.write(JSON.stringify(obj));
+      ' -- "$ARGUMENTS"
+
+  - id: write-trigger-artifact
+    depends_on: [ decode ]
+    bash: |
+      # Persist the decoded webhook payload so the task-done script can read
+      # issue_key + project from disk rather than via env-var substitution.
+      set -euo pipefail
+      printf '%s' $decode.output > "$ARTIFACTS_DIR/trigger-payload.json"
+      printf '{"path":"%s"}' "$ARTIFACTS_DIR/trigger-payload.json"
+
+  - id: handle-done
+    depends_on: [ write-trigger-artifact ]
+    bash: |
+      # Single script does everything: delete this ticket's outward Blocks
+      # links, JQL-sweep the project for Backlog non-Epic tickets with zero
+      # remaining blockers and transition each to Selected for Development,
+      # and roll up the parent Epic if all children are Done. Reads
+      # trigger-payload.json; emits {outward_blocks_deleted, tickets_promoted,
+      # epic_completed} JSON.
+      set -euo pipefail
+      bun /home/user/Archon/.archon/scripts/jira-task-done.ts

@@ -91,3 +91,23 @@ nodes:
         "$encoded_payload" \
         >"$dispatch_log" 2>&1 < /dev/null &
       printf '{"dispatched":"true","workflow":"task-implement","branch":"%s","log":"%s","pid":"%s"}' "$issue_key" "$dispatch_log" "$!"
+
+  - id: route-task-done
+    depends_on: [ decode ]
+    timeout: 900000
+    when: "$decode.output.event == 'transition' && $decode.output.issue_type !=
+      'Epic' && $decode.output.to_status == 'Done'"
+    bash: |
+      # Dispatch task-done when a non-Epic ticket transitions to Done. The
+      # workflow removes this ticket's outward Blocks links, sweeps the
+      # project for unblocked tickets and promotes them to Selected for
+      # Development, and rolls up the parent Epic if all children are Done.
+      # Pure Jira API — no worktree needed.
+      set -euo pipefail
+      encoded_payload="$(printf '%s' $decode.output | base64 -w0)"
+      mkdir -p "$ARTIFACTS_DIR/router-dispatch-logs"
+      dispatch_log="$ARTIFACTS_DIR/router-dispatch-logs/task-done.log"
+      nohup archon workflow run task-done \
+        "$encoded_payload" \
+        >"$dispatch_log" 2>&1 < /dev/null &
+      printf '{"dispatched":"true","workflow":"task-done","log":"%s","pid":"%s"}' "$dispatch_log" "$!"
