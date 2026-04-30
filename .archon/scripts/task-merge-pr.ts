@@ -39,9 +39,15 @@ try {
   // with `main` checked out elsewhere).
   const repoFromUrl = await execFileAsync('gh', ['repo', 'view', '--json', 'nameWithOwner', '--jq', '.nameWithOwner'], { cwd: process.cwd() });
   const nameWithOwner = repoFromUrl.stdout.trim();
+  // Synchronous merge — no `--auto`. Auto-merge requires the repo to have
+  // "Allow auto-merge" enabled in settings, and even then it queues the
+  // merge until GitHub thinks all required checks pass. We've already run
+  // synthesize → approve → parse-synthesis → merge-pr's when:; if we got
+  // here, the verdict says merge now. Synchronous merge fails fast on
+  // conflicts or unmergeable state, which is the right signal.
   const { stdout } = await execFileAsync(
     'gh',
-    ['pr', 'merge', String(prInfo.pr_number), '--squash', '--delete-branch', '--auto', '--repo', nameWithOwner],
+    ['pr', 'merge', String(prInfo.pr_number), '--squash', '--delete-branch', '--repo', nameWithOwner],
     { cwd: process.cwd(), maxBuffer: 50 * 1024 * 1024 }
   );
   console.log(stdout);
