@@ -165,13 +165,9 @@ nodes:
     bash: |
       # Deterministic quality gate: lint, typecheck, scoped vitest, scoped playwright.
       # Always exits 0; the JSON output's `passed` field drives the retry decision.
+      # The script reads ISSUE_KEY from $ARTIFACTS_DIR/trigger-payload.json
+      # and auto-detects the attempt number from existing feedback artifacts.
       set -euo pipefail
-      export ARTIFACTS_DIR="$ARTIFACTS_DIR"
-      # No surrounding quotes: $decode.output.issue_key substitutes as a
-      # shell-quoted literal (e.g. 'WOR-23'). Wrapping it in "..." would
-      # produce export ISSUE_KEY="'WOR-23'" — the embedded single quotes
-      # become part of the value.
-      export ISSUE_KEY=$decode.output.issue_key
       bash /home/user/Archon/.archon/scripts/task-run-validation.sh
 
   # ─── Dev attempt 2 + validation gate 2 (only if attempt 1 failed validation) ──
@@ -268,12 +264,6 @@ nodes:
     when: "$validate-1.output.passed == 'false'"
     bash: |
       set -euo pipefail
-      export ARTIFACTS_DIR="$ARTIFACTS_DIR"
-      # No surrounding quotes: $decode.output.issue_key substitutes as a
-      # shell-quoted literal (e.g. 'WOR-23'). Wrapping it in "..." would
-      # produce export ISSUE_KEY="'WOR-23'" — the embedded single quotes
-      # become part of the value.
-      export ISSUE_KEY=$decode.output.issue_key
       bash /home/user/Archon/.archon/scripts/task-run-validation.sh
 
   - id: generate-docs
@@ -556,12 +546,6 @@ nodes:
     when: "$parse-synthesis.output.decision == 'changes_requested'"
     bash: |
       set -euo pipefail
-      export ARTIFACTS_DIR="$ARTIFACTS_DIR"
-      # No surrounding quotes: $decode.output.issue_key substitutes as a
-      # shell-quoted literal (e.g. 'WOR-23'). Wrapping it in "..." would
-      # produce export ISSUE_KEY="'WOR-23'" — the embedded single quotes
-      # become part of the value.
-      export ISSUE_KEY=$decode.output.issue_key
       bash /home/user/Archon/.archon/scripts/task-run-validation.sh
 
   # ─── Merge gate ──

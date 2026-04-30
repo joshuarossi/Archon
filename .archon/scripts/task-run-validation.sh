@@ -22,7 +22,24 @@ set -uo pipefail
 exec 3>&1 1>&2
 
 ARTIFACTS_DIR="${ARTIFACTS_DIR:?ARTIFACTS_DIR not set}"
-ISSUE_KEY="${ISSUE_KEY:?ISSUE_KEY not set}"
+
+# Read ISSUE_KEY from the trigger payload — single source of truth, written
+# once by the decode node, no env-var passing or shell-quoting concerns.
+ISSUE_KEY=$(bun -e "
+  import { readFileSync } from 'node:fs';
+  const p = JSON.parse(readFileSync('${ARTIFACTS_DIR}/trigger-payload.json', 'utf8'));
+  process.stdout.write(p.issue_key);
+")
+if [ -z "$ISSUE_KEY" ]; then
+  echo "ISSUE_KEY missing from $ARTIFACTS_DIR/trigger-payload.json" >&2
+  exit 1
+fi
+
+# Auto-detect the attempt number by counting existing per-attempt reports.
+# validate-1 finds 0, writes attempt-1; validate-2 finds 1, writes attempt-2;
+# post-fix-validation finds 2, writes attempt-3. No env-var coordination needed.
+existing=$(ls "$ARTIFACTS_DIR"/feedback.attempt-*.json 2>/dev/null | wc -l)
+ATTEMPT_NUM=$((existing + 1))
 
 # Resolve the per-ticket test directory case-insensitively. The Jira key is
 # uppercase (WOR-23) but test-gen agents have scaffolded tests under both
@@ -44,8 +61,15 @@ find_ticket_dir() {
 VITEST_DIR=$(find_ticket_dir tests)
 PLAYWRIGHT_DIR=$(find_ticket_dir e2e)
 
-mkdir -p "$ARTIFACTS_DIR/test-results"
-REPORT="$ARTIFACTS_DIR/feedback.json"
+# Per-attempt artifact paths. validate-1 writes to feedback.attempt-1.json
+# and test-results/attempt-1/; validate-2 writes to attempt-2 paths. The
+# canonical feedback.json is also written (a copy of the latest attempt)
+# so dev-attempt-2's prompt can reference a stable path. The per-attempt
+# files are the audit trail: each attempt's evidence is preserved.
+ATTEMPT_RESULTS_DIR="$ARTIFACTS_DIR/test-results/attempt-$ATTEMPT_NUM"
+mkdir -p "$ATTEMPT_RESULTS_DIR"
+REPORT="$ARTIFACTS_DIR/feedback.attempt-$ATTEMPT_NUM.json"
+CANONICAL_REPORT="$ARTIFACTS_DIR/feedback.json"
 
 # Build the gates list incrementally as a JSON string.
 GATES_JSON="[]"
@@ -69,7 +93,7 @@ add_gate() {
 
 run_gate() {
   local name="$1" cmd="$2"
-  local log_file="$ARTIFACTS_DIR/test-results/${name}.log"
+  local log_file="$ATTEMPT_RESULTS_DIR/${name}.log"
 
   echo "──────────────────────────────────────────────────────────────────"
   echo "GATE: $name"
@@ -132,26 +156,39 @@ else
 fi
 echo
 
-# 4. Playwright scoped to this ticket's specs
+# 4. Playwright scoped to this ticket's specs.
+# Ensure browsers are installed BEFORE the gate runs — a fresh worktree
+# has @playwright/test in node_modules but no chromium binary yet, and a
+# missing-binary error would mark the gate failed for environmental
+# reasons rather than for a real AC failure. Run `npx playwright install
+# --with-deps chromium` once; it's a no-op on subsequent runs (browsers
+# live in ~/.cache/ms-playwright outside the worktree).
 if [ -d "$PLAYWRIGHT_DIR" ]; then
+  echo "── Ensuring Playwright browsers installed ──"
+  npx playwright install --with-deps chromium 2>&1 | tail -5 || true
   run_gate "playwright" "npx playwright test $PLAYWRIGHT_DIR --reporter=line" || OVERALL=1
 else
   skip_gate "playwright" "$PLAYWRIGHT_DIR/ does not exist"
 fi
 echo
 
-# Write the final structured report. Dev agent's next iteration reads this.
+# Write the per-attempt report (feedback.attempt-N.json), then copy to the
+# canonical feedback.json so dev-attempt-2's prompt can reference a stable
+# path. The per-attempt files are the audit trail.
 OVERALL_STATUS=$([ $OVERALL -eq 0 ] && echo passed || echo failed)
-ISSUE_KEY="$ISSUE_KEY" OVERALL_STATUS="$OVERALL_STATUS" GATES_JSON="$GATES_JSON" REPORT="$REPORT" bun -e '
+ATTEMPT_NUM="$ATTEMPT_NUM" ISSUE_KEY="$ISSUE_KEY" OVERALL_STATUS="$OVERALL_STATUS" GATES_JSON="$GATES_JSON" REPORT="$REPORT" CANONICAL_REPORT="$CANONICAL_REPORT" bun -e '
   import { writeFileSync } from "node:fs";
   const report = {
+    attempt: Number(process.env.ATTEMPT_NUM),
     issue_key: process.env.ISSUE_KEY,
     overall: process.env.OVERALL_STATUS,
     gates: JSON.parse(process.env.GATES_JSON),
     generated_at: new Date().toISOString(),
   };
-  writeFileSync(process.env.REPORT, JSON.stringify(report, null, 2));
-  console.log(`Test report written: ${process.env.REPORT}`);
+  const json = JSON.stringify(report, null, 2);
+  writeFileSync(process.env.REPORT, json);
+  writeFileSync(process.env.CANONICAL_REPORT, json);
+  console.log(`Reports written: ${process.env.REPORT} (and copy at feedback.json)`);
 '
 
 echo "══════════════════════════════════════════════════════════════════"
