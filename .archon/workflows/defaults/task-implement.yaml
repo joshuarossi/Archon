@@ -330,12 +330,19 @@ nodes:
     when: "$validate-2.output.passed == 'false'"
     loop:
       max_iterations: 5
-      # The bash terminator is the load-bearing gate — it actually re-runs
-      # validation and decides whether to continue. The `until` signal
-      # string is also required by the schema; setting it to an unlikely
-      # token that the agent should not accidentally emit. completion =
-      # signalDetected || bashComplete, so either path can end the loop.
-      until: __ARCHON_LOOP_AGENT_DECLARED_DONE__
+      # Two ways to exit the loop, either is sufficient:
+      #   1. The agent declares completion by emitting <COMPLETE>...</COMPLETE>
+      #      (or any matching XML tag wrapping COMPLETE). This is how the
+      #      agent says "I think I'm done."
+      #   2. The bash terminator runs validation; exit 0 = loop done, exit 1 =
+      #      keep iterating. This is the deterministic verifier — even if the
+      #      agent says it's done, if validation fails we keep going.
+      #
+      # In practice the agent emits COMPLETE first; if validation disagrees
+      # the loop re-invokes it on the next iteration with fresh feedback.
+      # If max_iterations is reached with neither path triggering, the loop
+      # node ends in state: failed.
+      until: COMPLETE
       until_bash: |
         set -uo pipefail
         bash /home/user/Archon/.archon/scripts/task-run-validation.sh > /dev/null 2>&1
@@ -370,9 +377,14 @@ nodes:
           `vitest`, `playwright`, `jest`, or any test runner — by any path.
         - DO NOT ASK. You have one job, do it.
         - WRITE CODE that addresses each "failed" entry in feedback.json
-          and satisfies the acceptance criteria, then COMMIT, then FINISH
-          the iteration. Validation runs after — if it still fails, the
-          loop re-invokes you with fresh feedback.
+          and satisfies the acceptance criteria, then COMMIT.
+
+        When you have committed and believe your work for this iteration
+        is complete, emit `<COMPLETE>done</COMPLETE>` on its own line as
+        the very last thing in your response. The pipeline will then run
+        validation; if it still fails, you will be re-invoked with fresh
+        feedback.json. If you have NOT yet finished writing/committing,
+        do not emit COMPLETE — the loop will iterate again.
 
   # ─── Materialize a final feedback.json after the loop converges ──
   # The loop's until_bash ran validation many times, but the LAST validation
