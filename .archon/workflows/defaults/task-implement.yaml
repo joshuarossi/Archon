@@ -118,87 +118,10 @@ nodes:
       printf '{"rebased":"true","onto":"%s"}' "$(git rev-parse origin/main | cut -c1-12)"
 
   # ─── Dev attempt 1 + validation gate 1 ─────────────────────────────────
-  # The dev agent has hard tool-permission rules that prevent it from reading,
-  # modifying, or running tests. The agent's only contract is "satisfy the ACs."
-  # The validation node alone is the authority on whether tests pass.
+  # Test boundaries: PreToolUse hook only (paths + selective Bash). Validate nodes run the full gate.
   - id: dev-attempt-1
     depends_on: [ rebase-on-main ]
     context: fresh
-    denied_tools:
-      # Cannot read test source
-      - "Read(tests/**)"
-      - "Read(test/**)"
-      - "Read(e2e/**)"
-      - "Read(__tests__/**)"
-      - "Read(**/*.test.*)"
-      - "Read(**/*.spec.*)"
-      - "Read(**/vitest.config.*)"
-      - "Read(**/playwright.config.*)"
-      - "Read(**/jest.config.*)"
-      # Cannot enumerate test directories — even seeing filenames leaks
-      # which tests exist and is a cheating signal (Glob/LS were our gap)
-      - "Glob(tests/**)"
-      - "Glob(test/**)"
-      - "Glob(e2e/**)"
-      - "Glob(__tests__/**)"
-      - "Glob(**/*.test.*)"
-      - "Glob(**/*.spec.*)"
-      - "Glob(**/vitest.config.*)"
-      - "Glob(**/playwright.config.*)"
-      - "Glob(**/jest.config.*)"
-      - "LS(tests)"
-      - "LS(test)"
-      - "LS(e2e)"
-      - "LS(__tests__)"
-      # Cannot write test source or test config
-      - "Write(tests/**)"
-      - "Edit(tests/**)"
-      - "Write(test/**)"
-      - "Edit(test/**)"
-      - "Write(e2e/**)"
-      - "Edit(e2e/**)"
-      - "Write(__tests__/**)"
-      - "Edit(__tests__/**)"
-      - "Write(**/*.test.*)"
-      - "Edit(**/*.test.*)"
-      - "Write(**/*.spec.*)"
-      - "Edit(**/*.spec.*)"
-      - "Write(**/vitest.config.*)"
-      - "Edit(**/vitest.config.*)"
-      - "Write(**/playwright.config.*)"
-      - "Edit(**/playwright.config.*)"
-      - "Write(**/jest.config.*)"
-      - "Edit(**/jest.config.*)"
-      - "Delete(tests/**)"
-      - "Delete(test/**)"
-      - "Delete(e2e/**)"
-      - "Delete(__tests__/**)"
-      - "Delete(**/*.test.*)"
-      - "Delete(**/*.spec.*)"
-      - "Delete(**/vitest.config.*)"
-      - "Delete(**/playwright.config.*)"
-      - "Delete(**/jest.config.*)"
-      # Cannot run any test runner or quality gate — those are the validation
-      # node's job, not the agent's.
-      - "Bash(npm test:*)"
-      - "Bash(npm run test*)"
-      - "Bash(npm run lint*)"
-      - "Bash(npm run typecheck*)"
-      - "Bash(npx vitest:*)"
-      - "Bash(npx playwright:*)"
-      - "Bash(npx jest:*)"
-      - "Bash(npx tsc:*)"
-      - "Bash(npx eslint:*)"
-      - "Bash(vitest:*)"
-      - "Bash(playwright:*)"
-      - "Bash(jest:*)"
-      - "Bash(tsc:*)"
-      - "Bash(eslint:*)"
-      # Block delegation/planning tools in the dev writer node.
-      - "Agent(*)"
-      - "TodoWrite(*)"
-      - "ToolSearch(*)"
-    # PreToolUse script: blocks Bash/read paths that bypass denied_tools (e.g. cat tests/…).
     # Same absolute path convention as bash nodes in this workflow (Archon checkout).
     hooks:
       PreToolUse:
@@ -254,81 +177,11 @@ nodes:
       bash /home/user/Archon/.archon/scripts/task-run-validation.sh
 
   # ─── Dev attempt 2 + validation gate 2 (only if attempt 1 failed validation) ──
-  # Same denied_tools cage. The agent reads $ARTIFACTS_DIR/feedback.json — which
-  # was just written by validate-1 — to learn what failed, then makes another
-  # commit fixing those issues.
+  # Same PreToolUse hook as dev-attempt-1. Reads feedback.json from validate-1.
   - id: dev-attempt-2
     depends_on: [ validate-1 ]
     when: "$validate-1.output.passed == 'false'"
     context: fresh
-    denied_tools:
-      - "Read(tests/**)"
-      - "Read(test/**)"
-      - "Read(e2e/**)"
-      - "Read(__tests__/**)"
-      - "Read(**/*.test.*)"
-      - "Read(**/*.spec.*)"
-      - "Read(**/vitest.config.*)"
-      - "Read(**/playwright.config.*)"
-      - "Read(**/jest.config.*)"
-      - "Glob(tests/**)"
-      - "Glob(test/**)"
-      - "Glob(e2e/**)"
-      - "Glob(__tests__/**)"
-      - "Glob(**/*.test.*)"
-      - "Glob(**/*.spec.*)"
-      - "Glob(**/vitest.config.*)"
-      - "Glob(**/playwright.config.*)"
-      - "Glob(**/jest.config.*)"
-      - "LS(tests)"
-      - "LS(test)"
-      - "LS(e2e)"
-      - "LS(__tests__)"
-      - "Write(tests/**)"
-      - "Edit(tests/**)"
-      - "Write(test/**)"
-      - "Edit(test/**)"
-      - "Write(e2e/**)"
-      - "Edit(e2e/**)"
-      - "Write(__tests__/**)"
-      - "Edit(__tests__/**)"
-      - "Write(**/*.test.*)"
-      - "Edit(**/*.test.*)"
-      - "Write(**/*.spec.*)"
-      - "Edit(**/*.spec.*)"
-      - "Write(**/vitest.config.*)"
-      - "Edit(**/vitest.config.*)"
-      - "Write(**/playwright.config.*)"
-      - "Edit(**/playwright.config.*)"
-      - "Write(**/jest.config.*)"
-      - "Edit(**/jest.config.*)"
-      - "Delete(tests/**)"
-      - "Delete(test/**)"
-      - "Delete(e2e/**)"
-      - "Delete(__tests__/**)"
-      - "Delete(**/*.test.*)"
-      - "Delete(**/*.spec.*)"
-      - "Delete(**/vitest.config.*)"
-      - "Delete(**/playwright.config.*)"
-      - "Delete(**/jest.config.*)"
-      - "Bash(npm test:*)"
-      - "Bash(npm run test*)"
-      - "Bash(npm run lint*)"
-      - "Bash(npm run typecheck*)"
-      - "Bash(npx vitest:*)"
-      - "Bash(npx playwright:*)"
-      - "Bash(npx jest:*)"
-      - "Bash(npx tsc:*)"
-      - "Bash(npx eslint:*)"
-      - "Bash(vitest:*)"
-      - "Bash(playwright:*)"
-      - "Bash(jest:*)"
-      - "Bash(tsc:*)"
-      - "Bash(eslint:*)"
-      # Block delegation/planning tools in the dev writer node.
-      - "Agent(*)"
-      - "TodoWrite(*)"
-      - "ToolSearch(*)"
     hooks:
       PreToolUse:
         - script: /home/user/Archon/.archon/scripts/archie-pretooluse-no-tests.ts
@@ -729,9 +582,7 @@ nodes:
   # ─── Implement fixes if synthesizer requested changes ──
   # Existing Archon command; reads consolidated-review.md + per-reviewer
   # findings; makes the changes; commits.
-  # Same denied_tools cage as the dev nodes: cannot read or modify tests,
-  # cannot run test runners. The fix-implementation cannot decide test
-  # failures are "pre-existing" because it cannot observe them.
+  # Same PreToolUse hook as dev nodes (test paths + selective Bash).
   - id: implement-fixes
     # Our own fix-implementer (.archon/commands/defaults/task-implement-fixes.md — bundled), not
     # the bundled archon-implement-review-fixes. The bundled command is built
@@ -743,61 +594,6 @@ nodes:
     depends_on: [ parse-synthesis ]
     when: "$verify-pr-ready.output.ready == 'true' && $parse-synthesis.output.decision == 'changes_requested'"
     context: fresh
-    denied_tools:
-      - "Read(tests/**)"
-      - "Read(test/**)"
-      - "Read(e2e/**)"
-      - "Read(__tests__/**)"
-      - "Read(**/*.test.*)"
-      - "Read(**/*.spec.*)"
-      - "Read(**/vitest.config.*)"
-      - "Read(**/playwright.config.*)"
-      - "Read(**/jest.config.*)"
-      - "Glob(tests/**)"
-      - "Glob(test/**)"
-      - "Glob(e2e/**)"
-      - "Glob(__tests__/**)"
-      - "Glob(**/*.test.*)"
-      - "Glob(**/*.spec.*)"
-      - "Glob(**/vitest.config.*)"
-      - "Glob(**/playwright.config.*)"
-      - "Glob(**/jest.config.*)"
-      - "LS(tests)"
-      - "LS(test)"
-      - "LS(e2e)"
-      - "LS(__tests__)"
-      - "Write(tests/**)"
-      - "Edit(tests/**)"
-      - "Write(test/**)"
-      - "Edit(test/**)"
-      - "Write(e2e/**)"
-      - "Edit(e2e/**)"
-      - "Write(__tests__/**)"
-      - "Edit(__tests__/**)"
-      - "Write(**/*.test.*)"
-      - "Edit(**/*.test.*)"
-      - "Write(**/*.spec.*)"
-      - "Edit(**/*.spec.*)"
-      - "Write(**/vitest.config.*)"
-      - "Edit(**/vitest.config.*)"
-      - "Write(**/playwright.config.*)"
-      - "Edit(**/playwright.config.*)"
-      - "Write(**/jest.config.*)"
-      - "Edit(**/jest.config.*)"
-      - "Bash(npm test:*)"
-      - "Bash(npm run test*)"
-      - "Bash(npm run lint*)"
-      - "Bash(npm run typecheck*)"
-      - "Bash(npx vitest:*)"
-      - "Bash(npx playwright:*)"
-      - "Bash(npx jest:*)"
-      - "Bash(npx tsc:*)"
-      - "Bash(npx eslint:*)"
-      - "Bash(vitest:*)"
-      - "Bash(playwright:*)"
-      - "Bash(jest:*)"
-      - "Bash(tsc:*)"
-      - "Bash(eslint:*)"
     hooks:
       PreToolUse:
         - script: /home/user/Archon/.archon/scripts/archie-pretooluse-no-tests.ts
