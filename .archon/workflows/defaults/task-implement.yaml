@@ -198,6 +198,12 @@ nodes:
       - "Agent(*)"
       - "TodoWrite(*)"
       - "ToolSearch(*)"
+    # PreToolUse script: blocks Bash/read paths that bypass denied_tools (e.g. cat tests/…).
+    # Same absolute path convention as bash nodes in this workflow (Archon checkout).
+    hooks:
+      PreToolUse:
+        - script: /home/user/Archon/.archon/scripts/archie-pretooluse-no-tests.ts
+          timeout: 30
     prompt: |
       Your task is to write code that satisfies every acceptance criterion
       in `$ARTIFACTS_DIR/task-context.md`. The acceptance criteria are
@@ -323,6 +329,10 @@ nodes:
       - "Agent(*)"
       - "TodoWrite(*)"
       - "ToolSearch(*)"
+    hooks:
+      PreToolUse:
+        - script: /home/user/Archon/.archon/scripts/archie-pretooluse-no-tests.ts
+          timeout: 30
     prompt: |
       Your task is to write code that satisfies every acceptance criterion
       in `$ARTIFACTS_DIR/task-context.md`, AND fix the failures listed in
@@ -788,6 +798,10 @@ nodes:
       - "Bash(jest:*)"
       - "Bash(tsc:*)"
       - "Bash(eslint:*)"
+    hooks:
+      PreToolUse:
+        - script: /home/user/Archon/.archon/scripts/archie-pretooluse-no-tests.ts
+          timeout: 30
 
   # ─── Deterministic quality gate after fixes ──
   # Re-runs lint/typecheck/vitest/playwright. Always exits 0; the JSON output's

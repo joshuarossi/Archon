@@ -1,8 +1,13 @@
 import { describe, test, expect } from 'bun:test';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { parseNodeHooks } from './loader';
 import { buildSDKHooksFromYAML } from '@archon/providers/claude/provider';
 import type { WorkflowNodeHooks } from './schemas';
 import { parseWorkflow } from './loader';
+
+const hookCtx = { cwd: '/tmp', mergedEnv: process.env as NodeJS.ProcessEnv };
 
 describe('parseNodeHooks', () => {
   test('undefined returns undefined', () => {
@@ -45,11 +50,21 @@ describe('parseNodeHooks', () => {
     expect(errors[0]).toContain('PreToolUse');
   });
 
-  test('matcher missing response pushes error', () => {
+  test('matcher missing response and script pushes error', () => {
     const errors: string[] = [];
     parseNodeHooks({ PreToolUse: [{ matcher: 'Bash' }] }, { id: 'test', errors });
     expect(errors).toHaveLength(1);
-    expect(errors[0]).toContain('response');
+    expect(errors[0]).toMatch(/response|script/i);
+  });
+
+  test('matcher with both response and script pushes error', () => {
+    const errors: string[] = [];
+    parseNodeHooks(
+      { PreToolUse: [{ matcher: 'Bash', response: { x: 1 }, script: 'foo' }] },
+      { id: 'test', errors }
+    );
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatch(/both response and script|response and script/i);
   });
 
   test('matcher with string response pushes error', () => {
@@ -75,6 +90,18 @@ describe('parseNodeHooks', () => {
     expect(errors).toHaveLength(0);
     expect(result).toEqual({
       PreToolUse: [{ matcher: 'Bash', response: { decision: 'block' } }],
+    });
+  });
+
+  test('valid PreToolUse script matcher returns parsed structure', () => {
+    const errors: string[] = [];
+    const result = parseNodeHooks(
+      { PreToolUse: [{ matcher: 'Bash', script: 'my-hook', runtime: 'bun' }] },
+      { id: 'test', errors }
+    );
+    expect(errors).toHaveLength(0);
+    expect(result).toEqual({
+      PreToolUse: [{ matcher: 'Bash', script: 'my-hook', runtime: 'bun' }],
     });
   });
 
@@ -133,11 +160,11 @@ describe('parseNodeHooks', () => {
 });
 
 describe('buildSDKHooksFromYAML', () => {
-  test('single event with one matcher creates SDK structure', () => {
+  test('single event with one matcher creates SDK structure', async () => {
     const nodeHooks: WorkflowNodeHooks = {
       PreToolUse: [{ matcher: 'Bash', response: { decision: 'block' } }],
     };
-    const sdk = buildSDKHooksFromYAML(nodeHooks);
+    const sdk = await buildSDKHooksFromYAML(nodeHooks, hookCtx);
     expect(sdk.PreToolUse).toHaveLength(1);
     expect(sdk.PreToolUse![0].matcher).toBe('Bash');
     expect(sdk.PreToolUse![0].hooks).toHaveLength(1);
@@ -150,47 +177,87 @@ describe('buildSDKHooksFromYAML', () => {
     const nodeHooks: WorkflowNodeHooks = {
       PreToolUse: [{ response }],
     };
-    const sdk = buildSDKHooksFromYAML(nodeHooks);
+    const sdk = await buildSDKHooksFromYAML(nodeHooks, hookCtx);
     const callback = sdk.PreToolUse![0].hooks[0];
     const result = await callback(null, undefined, { signal: new AbortController().signal });
     expect(result).toEqual(response);
   });
 
-  test('matcher field propagated to SDK structure', () => {
+  test('matcher field propagated to SDK structure', async () => {
     const nodeHooks: WorkflowNodeHooks = {
       PreToolUse: [{ matcher: 'Write|Edit', response: { x: 1 } }],
     };
-    const sdk = buildSDKHooksFromYAML(nodeHooks);
+    const sdk = await buildSDKHooksFromYAML(nodeHooks, hookCtx);
     expect(sdk.PreToolUse![0].matcher).toBe('Write|Edit');
   });
 
-  test('timeout field propagated to SDK structure', () => {
+  test('timeout field propagated to SDK structure', async () => {
     const nodeHooks: WorkflowNodeHooks = {
       PreToolUse: [{ response: { x: 1 }, timeout: 120 }],
     };
-    const sdk = buildSDKHooksFromYAML(nodeHooks);
+    const sdk = await buildSDKHooksFromYAML(nodeHooks, hookCtx);
     expect(sdk.PreToolUse![0].timeout).toBe(120);
   });
 
-  test('absent matcher has no matcher field on SDK structure', () => {
+  test('absent matcher has no matcher field on SDK structure', async () => {
     const nodeHooks: WorkflowNodeHooks = {
       PostToolUse: [{ response: { systemMessage: 'check' } }],
     };
-    const sdk = buildSDKHooksFromYAML(nodeHooks);
+    const sdk = await buildSDKHooksFromYAML(nodeHooks, hookCtx);
     expect('matcher' in sdk.PostToolUse![0]).toBe(false);
   });
 
-  test('multiple matchers per event creates multiple entries', () => {
+  test('multiple matchers per event creates multiple entries', async () => {
     const nodeHooks: WorkflowNodeHooks = {
       PreToolUse: [
         { matcher: 'Bash', response: { a: 1 } },
         { matcher: 'Write', response: { b: 2 } },
       ],
     };
-    const sdk = buildSDKHooksFromYAML(nodeHooks);
+    const sdk = await buildSDKHooksFromYAML(nodeHooks, hookCtx);
     expect(sdk.PreToolUse).toHaveLength(2);
     expect(sdk.PreToolUse![0].matcher).toBe('Bash');
     expect(sdk.PreToolUse![1].matcher).toBe('Write');
+  });
+
+  test('script hook reads stdin and returns parsed stdout', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'archon-hook-sdk-'));
+    const scriptPath = join(dir, 'hook.ts');
+    writeFileSync(
+      scriptPath,
+      `const raw = await Bun.stdin.text();
+JSON.parse(raw);
+console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow' } }));`,
+      'utf8'
+    );
+    const nodeHooks: WorkflowNodeHooks = {
+      PreToolUse: [{ script: scriptPath, runtime: 'bun' }],
+    };
+    const sdk = await buildSDKHooksFromYAML(nodeHooks, { cwd: dir, mergedEnv: process.env });
+    const callback = sdk.PreToolUse![0].hooks[0];
+    const result = await callback(
+      { tool_name: 'Read', tool_input: { file_path: 'src/x.ts' } },
+      undefined,
+      { signal: new AbortController().signal }
+    );
+    expect(result).toEqual({
+      hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow' },
+    });
+  });
+
+  test('script hook empty stdout yields undefined (allow passthrough)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'archon-hook-empty-'));
+    const scriptPath = join(dir, 'hook.ts');
+    writeFileSync(scriptPath, 'await Bun.stdin.text();\n', 'utf8');
+    const nodeHooks: WorkflowNodeHooks = {
+      PreToolUse: [{ script: scriptPath }],
+    };
+    const sdk = await buildSDKHooksFromYAML(nodeHooks, { cwd: dir, mergedEnv: process.env });
+    const callback = sdk.PreToolUse![0].hooks[0];
+    const result = await callback({ x: 1 }, undefined, {
+      signal: new AbortController().signal,
+    });
+    expect(result).toBeUndefined();
   });
 });
 

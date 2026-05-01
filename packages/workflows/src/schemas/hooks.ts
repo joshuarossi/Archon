@@ -36,18 +36,42 @@ export type WorkflowHookEvent = z.infer<typeof workflowHookEventSchema>;
 /** Canonical list of hook events — derived from schema, do not duplicate. */
 export const WORKFLOW_HOOK_EVENTS: readonly WorkflowHookEvent[] = workflowHookEventSchema.options;
 
+const hookRuntimeSchema = z.enum(['bun', 'uv']);
+
 /**
  * A single hook matcher in a YAML workflow definition.
- * Maps 1:1 to the SDK's HookCallbackMatcher.
+ * Maps to the SDK's HookCallbackMatcher.
+ *
+ * Exactly one of:
+ * - **Static**: `response` — same object returned on every hook invocation (legacy).
+ * - **Script**: `script` — Bun or uv subprocess; stdin receives JSON hook input; stdout is SyncHookJSONOutput (empty stdout = allow passthrough).
  */
-export const workflowHookMatcherSchema = z.object({
-  /** Regex pattern to match tool names (PreToolUse/PostToolUse) or event subtypes. */
-  matcher: z.string().optional(),
-  /** The SDK SyncHookJSONOutput to return when this hook fires. */
-  response: z.record(z.unknown()),
-  /** Timeout in seconds (default: SDK default of 60). */
-  timeout: z.number().positive().optional(),
-});
+export const workflowHookMatcherSchema = z
+  .object({
+    /** Regex pattern to match tool names (PreToolUse/PostToolUse) or event subtypes. */
+    matcher: z.string().optional(),
+    /** Timeout in seconds (default: SDK default of 60). Enforced for script hooks. */
+    timeout: z.number().positive().optional(),
+    /** Static SDK output — mutually exclusive with `script`. */
+    response: z.record(z.unknown()).optional(),
+    /** Named script key, filesystem path, or inline source — mutually exclusive with `response`. */
+    script: z.string().min(1, 'script cannot be empty').optional(),
+    /** Runtime for `script` hooks. Default `bun`. For named scripts, discovery may override when omitted. */
+    runtime: hookRuntimeSchema.optional(),
+  })
+  .strict()
+  .superRefine((data, ctx) => {
+    const hasResponse = data.response !== undefined;
+    const hasScript = data.script !== undefined;
+    if (hasResponse === hasScript) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: hasResponse
+          ? 'hook matcher cannot set both response and script — use exactly one'
+          : 'hook matcher must set either response (static) or script (dynamic subprocess)',
+      });
+    }
+  });
 
 export type WorkflowHookMatcher = z.infer<typeof workflowHookMatcherSchema>;
 

@@ -75,6 +75,7 @@ import {
   isInlineScript,
   formatSubprocessFailure,
 } from './executor-shared';
+import { resolveWorkflowHooksForExecution } from './hook-script-resolution';
 
 /** Lazy-initialized logger (deferred so test mocks can intercept createLogger) */
 let cachedLog: ReturnType<typeof createLogger> | undefined;
@@ -338,7 +339,7 @@ async function resolveNodeProviderAndModel(
   platform: IWorkflowPlatform,
   conversationId: string,
   workflowRunId: string,
-  _cwd: string,
+  cwd: string,
   workflowLevelOptions: WorkflowLevelOptions
 ): Promise<{
   provider: string;
@@ -441,10 +442,20 @@ async function resolveNodeProviderAndModel(
     baseOptions.outputFormat = { type: 'json_schema', schema: node.output_format };
   }
 
+  let resolvedHooks = node.hooks;
+  if (resolvedHooks) {
+    try {
+      resolvedHooks = await resolveWorkflowHooksForExecution(resolvedHooks, cwd);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(`Node '${node.id}': failed to resolve hook scripts — ${message}`);
+    }
+  }
+
   // Build raw nodeConfig — provider translates internally
   const nodeConfig: NodeConfig = {
     mcp: node.mcp,
-    hooks: node.hooks,
+    hooks: resolvedHooks,
     skills: node.skills,
     agents: node.agents,
     allowed_tools: node.allowed_tools,

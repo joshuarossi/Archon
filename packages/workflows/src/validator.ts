@@ -32,6 +32,7 @@ function getLog(): ReturnType<typeof createLogger> {
 }
 import { isScriptNode } from './schemas';
 import type { WorkflowDefinition, DagNode } from './schemas';
+import { resolveHookScriptMatcher } from './hook-script-resolution';
 import type { ScriptRuntime } from './script-discovery';
 import { discoverScriptsForCwd } from './script-discovery';
 import { isInlineScript } from './executor-shared';
@@ -476,6 +477,29 @@ export async function validateWorkflowResources(
             message: `Tool restrictions are not supported by provider '${provider}' — this will be ignored`,
             hint: 'Remove tool restriction fields or switch to a provider that supports them',
           });
+        }
+      }
+    }
+
+    // --- Hook script matchers: ensure script path / named script resolves ---
+    if ('hooks' in node && node.hooks) {
+      for (const [event, matchers] of Object.entries(node.hooks)) {
+        if (!Array.isArray(matchers)) continue;
+        for (let i = 0; i < matchers.length; i++) {
+          const m = matchers[i];
+          if (m.script === undefined) continue;
+          try {
+            await resolveHookScriptMatcher(m.script, m.runtime, cwd);
+          } catch (e) {
+            const err = e as Error;
+            issues.push({
+              level: 'error',
+              nodeId: node.id,
+              field: `hooks.${event}[${i}].script`,
+              message: err.message,
+              hint: 'Use a named script in .archon/scripts/, an absolute/relative file path, or inline script source',
+            });
+          }
         }
       }
     }
