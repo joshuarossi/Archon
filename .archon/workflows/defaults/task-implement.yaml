@@ -117,10 +117,18 @@ nodes:
       git push --force-with-lease origin HEAD --quiet
       printf '{"rebased":"true","onto":"%s"}' "$(git rev-parse origin/main | cut -c1-12)"
 
+  - id: baseline-validate
+    depends_on: [ rebase-on-main ]
+    bash: |
+      # Run a baseline gate before any dev attempt so feedback.json exists
+      # from the first implementation pass onward.
+      set -euo pipefail
+      bash /home/user/Archon/.archon/scripts/task-run-validation.sh
+
   # ─── Dev attempt 1 + validation gate 1 ─────────────────────────────────
   # Test boundaries: PreToolUse hook only (paths + selective Bash). Validate nodes run the full gate.
   - id: dev-attempt-1
-    depends_on: [ rebase-on-main ]
+    depends_on: [ baseline-validate ]
     context: fresh
     # Same absolute path convention as bash nodes in this workflow (Archon checkout).
     hooks:
@@ -128,43 +136,125 @@ nodes:
         - script: /home/user/Archon/.archon/scripts/archie-pretooluse-no-tests.ts
           timeout: 30
     prompt: |
-      Your task is to write code that satisfies every acceptance criterion
-      in `$ARTIFACTS_DIR/task-context.md`. The acceptance criteria are
-      the standard for "done."
+      # Implement Task
 
-      Inputs:
-      - `$ARTIFACTS_DIR/task-context.md` — the task summary, description,
-        and acceptance criteria. This is the spec.
-      - `$ARTIFACTS_DIR/parent-attachments.md` — the project's tech stack
-        and conventions (TechSpec, DesignDoc, STYLE_GUIDE, etc.).
-      - The current branch checkout (cwd is the codebase).
+      **Input**: `$ARTIFACTS_DIR/task-context.md`
 
-      RULES (no ambiguity, no exceptions):
-      - DO NOT READ TESTS. Never open files under `tests/`, `test/`,
-        `e2e/`, `__tests__/`, or matching `*.test.*` / `*.spec.*`.
-      - DO NOT WRITE OR EDIT TESTS. Never create or modify test files,
-        test fixtures, or test configs (vitest.config, playwright.config,
-        jest.config).
-      - DO NOT RUN TESTS. Never invoke `npm test`, `npm run test*`,
-        `vitest`, `playwright`, `jest`, or any test runner — by any path
-        (`npx`, `node ./node_modules/.bin/...`, anything).
-      - AUTOMATIC FAILURE CONDITION: if you create, modify, or delete any
-        file under `tests/`, `test/`, `e2e/`, `__tests__/`, any
-        `*.test.*` / `*.spec.*` file, or `vitest.config.*` /
-        `playwright.config.*` / `jest.config.*`, this attempt is invalid.
-        Do not touch those files.
-      - DO NOT ASK. Never ask "how should I…" or "should I run tests" —
-        you have one job, do it.
-      - WRITE CODE that satisfies the acceptance criteria, then COMMIT,
-        then FINISH. That is the entire workflow.
+      ---
 
-      The ticket tells you what to write. task-context.md and
-      parent-attachments.md are the contract. If the ticket is ambiguous,
-      name the ambiguity in your commit message and pick the most direct
-      interpretation.
+      ## Your Mission
 
-      Output: commits on the current branch whose code, taken together,
-      satisfies every acceptance criterion. Commit when done.
+      Implement the product behavior required by every acceptance criterion in
+      `$ARTIFACTS_DIR/task-context.md`. The ticket context and parent
+      attachments are the contract; validation feedback is only an external
+      symptom report.
+
+      Passing validation is not the direct objective. The objective is to
+      implement the requested product behavior within scope. Use validation
+      only to infer which requirement may still be incomplete.
+
+      ## Phase 1: LOAD - Gather Context
+
+      Read:
+      - `$ARTIFACTS_DIR/task-context.md` — task summary, description, and
+        acceptance criteria. This is the implementation spec.
+      - `$ARTIFACTS_DIR/parent-attachments.md` — project tech stack,
+        architecture, conventions, TechSpec, DesignDoc, STYLE_GUIDE, etc.
+      - `$ARTIFACTS_DIR/feedback.json` — baseline quality gate output. Treat
+        this as diagnostic signal, not as a specification.
+      - Production source files needed to understand the relevant code path.
+
+      Do not read tests, fixtures, Playwright artifacts, screenshots, or
+      error-context files.
+
+      **PHASE_1_CHECKPOINT:**
+      - [ ] Acceptance criteria are listed in your notes
+      - [ ] Relevant production source areas are identified
+      - [ ] Validation feedback has been interpreted only as product symptoms
+
+      ## Phase 2: PLAN - Map Requirements to Source
+
+      Create a concise implementation plan:
+      - Map each acceptance criterion to the production behavior it requires.
+      - Map each required behavior to likely source files.
+      - Identify any validation signal that points to an incomplete product
+        behavior.
+      - Ignore validation details that are test-shaped: selectors, fixture
+        values, fake IDs, assertion wording, screenshots, stack trace lines,
+        test file paths, and artifact paths.
+
+      If the ticket is ambiguous, choose the most direct interpretation that
+      fits the existing architecture. Do not ask for clarification.
+
+      **PHASE_2_CHECKPOINT:**
+      - [ ] Every planned edit is justified by the ticket or existing code
+      - [ ] No planned edit exists solely to satisfy visible test mechanics
+      - [ ] No test, fixture, generated, or validation artifact file is in scope
+
+      ## Phase 3: IMPLEMENT - Edit Production Code
+
+      Make only the production-code edits needed to satisfy the ticket.
+
+      Forbidden:
+      - Reading, creating, modifying, or deleting files under `tests/`, `test/`,
+        `e2e/`, `__tests__/`, or matching `*.test.*` / `*.spec.*`
+      - Editing test fixtures or test configs: `vitest.config.*`,
+        `playwright.config.*`, `jest.config.*`
+      - Running test commands: `npm test`, `npm run test*`, `vitest`,
+        `playwright`, `jest`, `npx` test runners, or direct
+        `node ./node_modules/.bin/...` test runners
+      - Editing generated files, generated directories, or validation artifacts
+        such as `test-results/`
+      - Adding fake IDs, hardcoded fixture behavior, test-only branches,
+        selector-driven UI, weakened auth, weakened validation, or special
+        routes just because validation output exposed them
+      - Using subagents or delegation tools to inspect the codebase
+
+      **PHASE_3_CHECKPOINT:**
+      - [ ] Edits are limited to production source files in ticket scope
+      - [ ] No test-shaped behavior or validation-harness workaround was added
+      - [ ] Existing architecture and style were followed
+
+      ## Phase 4: VERIFY - Self-Check Without Tests
+
+      Review your changed files manually and with non-test commands only when
+      appropriate. Do not run test runners.
+
+      Your self-check must include:
+      - Requirement mapping: each acceptance criterion and the production
+        behavior implemented for it
+      - Validation interpretation: product-level symptoms inferred from
+        feedback, without mentioning selectors, test files, line numbers,
+        screenshots, fixture values, or artifact paths
+      - Scope check: changed files and why each one is in ticket scope
+      - Anti-gaming check: confirm no fake IDs, test selectors, hardcoded
+        fixtures, generated-file edits, auth weakening, or test-specific
+        branches were added
+
+      **PHASE_4_CHECKPOINT:**
+      - [ ] All acceptance criteria are implemented
+      - [ ] Feedback-linked source issues for this ticket were addressed
+      - [ ] No forbidden files or commands were used
+
+      ## Phase 5: COMMIT - Save Work
+
+      Commit the implementation on the current branch.
+
+      The commit message should summarize the ticket behavior implemented. If
+      you had to make an assumption because the ticket was ambiguous, mention
+      the assumption in the commit message.
+
+      ## Success Criteria
+
+      - **AC_COMPLETE**: Every acceptance criterion has corresponding
+        production behavior.
+      - **SCOPE_DISCIPLINED**: Every changed file is justified by the ticket
+        or existing architecture.
+      - **NO_TEST_GAMING**: No visible validation detail was turned into a
+        test-specific implementation.
+      - **NO_TEST_ACCESS**: No test, fixture, config, generated, or validation
+        artifact files were read or modified; no test runner was executed.
+      - **COMMITTED**: The production implementation is committed.
 
   - id: validate-1
     depends_on: [ dev-attempt-1 ]
@@ -176,67 +266,330 @@ nodes:
       set -euo pipefail
       bash /home/user/Archon/.archon/scripts/task-run-validation.sh
 
+  - id: review-dev-attempt-1
+    depends_on: [ validate-1 ]
+    context: fresh
+    prompt: |
+      # Review Implementation Attempt
+
+      **Input**: `$ARTIFACTS_DIR/task-context.md`
+
+      ---
+
+      ## Your Mission
+
+      Review the current implementation attempt for product correctness,
+      scope discipline, and anti-gaming behavior. Do not edit files. Produce a
+      durable artifact for the next development attempt.
+
+      The artifact you write is the specification for the next step. Be
+      precise enough that the implementation agent can repair issues without
+      reading tests or guessing your intent.
+
+      ## Phase 1: LOAD - Gather Review Inputs
+
+      Read:
+      - `$ARTIFACTS_DIR/task-context.md`
+      - `$ARTIFACTS_DIR/parent-attachments.md`
+      - `$ARTIFACTS_DIR/feedback.json`
+      - `git diff origin/main`
+      - Production files changed by the implementation attempt
+
+      Do not read tests, fixtures, Playwright artifacts, screenshots, or
+      error-context files.
+
+      **PHASE_1_CHECKPOINT:**
+      - [ ] Acceptance criteria are loaded
+      - [ ] Changed production files are identified
+      - [ ] Validation feedback is interpreted as product symptoms only
+
+      ## Phase 2: REVIEW - Evaluate Implementation Quality
+
+      Evaluate:
+      - Does the diff implement every acceptance criterion?
+      - Are changed files within the ticket's intended scope?
+      - Did the implementation preserve existing architecture and security
+        boundaries?
+      - Did it avoid test-harness gaming, fake IDs, fixture-specific branches,
+        selector-driven UI, generated-file edits, weakened auth, weakened
+        validation, and special routes?
+      - Are deterministic failures in `feedback.json` addressed as product
+        behavior rather than copied test mechanics?
+      - Are there obvious risks the next dev attempt should fix before
+        validation can be trusted?
+
+      **PHASE_2_CHECKPOINT:**
+      - [ ] AC gaps are listed
+      - [ ] Scope violations are listed
+      - [ ] Test-gaming risks are listed
+      - [ ] Required repairs are actionable
+
+      ## Phase 3: WRITE - Save Review Artifact
+
+      Write `$ARTIFACTS_DIR/dev-review-1.json` as valid JSON with this shape:
+
+      ```json
+      {
+        "passed": true,
+        "summary": "short review summary",
+        "acceptance_criteria_gaps": [],
+        "scope_violations": [],
+        "architecture_risks": [],
+        "test_gaming_risks": [],
+        "required_repairs": []
+      }
+      ```
+
+      Set `"passed": false` if any required repair remains.
+
+      Each item in `required_repairs` must include:
+      - `file`
+      - `issue`
+      - `required_change`
+      - `acceptance_criterion`
+
+      ## Success Criteria
+
+      - **ARTIFACT_WRITTEN**: `$ARTIFACTS_DIR/dev-review-1.json` exists and is
+        valid JSON.
+      - **AC_REVIEWED**: Every acceptance criterion was checked.
+      - **ACTIONABLE**: Every required repair names a file and change.
+      - **NO_EDITS**: No repository files were modified by this review.
+
+  - id: parse-dev-review-1
+    depends_on: [ review-dev-attempt-1 ]
+    bash: |
+      set -euo pipefail
+      review="$ARTIFACTS_DIR/dev-review-1.json"
+      latest="$ARTIFACTS_DIR/dev-review-latest.json"
+      if [ ! -f "$review" ]; then
+        printf '{"passed":false,"reason":"missing dev-review-1.json"}'
+        exit 0
+      fi
+      cp "$review" "$latest"
+      bun -e '
+        import { readFileSync } from "node:fs";
+        const review = JSON.parse(readFileSync(process.argv[1], "utf8"));
+        process.stdout.write(JSON.stringify({
+          passed: review.passed === true,
+          required_repairs: Array.isArray(review.required_repairs) ? review.required_repairs.length : 0
+        }));
+      ' -- "$review"
+
   # ─── Dev attempt 2 + validation gate 2 (only if attempt 1 failed validation) ──
   # Same PreToolUse hook as dev-attempt-1. Reads feedback.json from validate-1.
   - id: dev-attempt-2
-    depends_on: [ validate-1 ]
-    when: "$validate-1.output.passed == 'false'"
+    depends_on: [ validate-1, parse-dev-review-1 ]
+    when: "$validate-1.output.passed == 'false' || $parse-dev-review-1.output.passed == 'false'"
     context: fresh
     hooks:
       PreToolUse:
         - script: /home/user/Archon/.archon/scripts/archie-pretooluse-no-tests.ts
           timeout: 30
     prompt: |
-      Your task is to write code that satisfies every acceptance criterion
-      in `$ARTIFACTS_DIR/task-context.md`, AND fix the failures listed in
-      `$ARTIFACTS_DIR/feedback.json`.
+      # Repair Task Implementation
 
-      Inputs:
-      - `$ARTIFACTS_DIR/task-context.md` — the task summary, description,
-        and acceptance criteria. This is the spec.
-      - `$ARTIFACTS_DIR/parent-attachments.md` — the project's tech stack
-        and conventions.
-      - `$ARTIFACTS_DIR/feedback.json` — a list of failures observed
-        against the current branch (lint, typecheck, vitest, playwright)
-        with logs. Each entry that says "failed" is a thing for you to
-        fix. The acceptance criteria remain the standard for "done"; the
-        failures here are concrete pointers to where the code is not yet
-        meeting the ACs.
-      - The current branch checkout (cwd is the codebase).
+      **Input**: `$ARTIFACTS_DIR/feedback.json`
 
-      RULES (no ambiguity, no exceptions):
-      - DO NOT READ TESTS. Never open files under `tests/`, `test/`,
-        `e2e/`, `__tests__/`, or matching `*.test.*` / `*.spec.*`.
-      - DO NOT WRITE OR EDIT TESTS. Never create or modify test files,
-        test fixtures, or test configs (vitest.config, playwright.config,
-        jest.config).
-      - DO NOT RUN TESTS. Never invoke `npm test`, `npm run test*`,
-        `vitest`, `playwright`, `jest`, or any test runner — by any path
-        (`npx`, `node ./node_modules/.bin/...`, anything).
-      - AUTOMATIC FAILURE CONDITION: if you create, modify, or delete any
-        file under `tests/`, `test/`, `e2e/`, `__tests__/`, any
-        `*.test.*` / `*.spec.*` file, or `vitest.config.*` /
-        `playwright.config.*` / `jest.config.*`, this attempt is invalid.
-        Do not touch those files.
-      - DO NOT ASK. Never ask "how should I…" or "should I run tests" —
-        you have one job, do it.
-      - WRITE CODE that satisfies the acceptance criteria and addresses
-        every failure in feedback.json, then COMMIT, then FINISH. That
-        is the entire workflow.
+      ---
 
-      The ticket tells you what to write. task-context.md and
-      parent-attachments.md are the contract.
+      ## Your Mission
 
-      Output: commits on the current branch whose code, taken together,
-      satisfies every acceptance criterion AND closes every failure in
-      feedback.json. Commit when done.
+      Continue implementing the product behavior required by
+      `$ARTIFACTS_DIR/task-context.md`. Use `$ARTIFACTS_DIR/feedback.json` to
+      infer which ticket requirement or production behavior may still be
+      incomplete.
+
+      Validation feedback is a symptom report, not an implementation spec.
+      Do not implement behavior solely because it appears in a test failure,
+      selector, stack trace, screenshot, fixture name, route, fake ID,
+      assertion message, or artifact path.
+
+      ## Phase 1: LOAD - Gather Context
+
+      Read:
+      - `$ARTIFACTS_DIR/task-context.md` — task summary, description, and
+        acceptance criteria. This is the implementation spec.
+      - `$ARTIFACTS_DIR/parent-attachments.md` — project tech stack and
+        conventions.
+      - `$ARTIFACTS_DIR/feedback.json` — latest validation output. Treat it
+        as diagnostic signal only.
+      - `$ARTIFACTS_DIR/dev-review-latest.json` — implementation-quality
+        review feedback. Treat it as repair guidance within the ticket scope.
+      - Production source files needed to understand the failing behavior.
+
+      Do not read tests, fixtures, Playwright artifacts, screenshots, or
+      error-context files.
+
+      **PHASE_1_CHECKPOINT:**
+      - [ ] Acceptance criteria are loaded
+      - [ ] Current validation failures are translated into product symptoms
+      - [ ] No test-shaped artifact has been opened
+
+      ## Phase 2: ANALYZE - Convert Feedback to Product Work
+
+      For each failed gate, identify the likely product behavior that remains
+      incomplete. Keep the acceptance criteria as the standard for correctness.
+
+      Ignore validation details that are not product requirements:
+      - selectors, data-test IDs, locator text, assertion wording
+      - fake IDs, fixture values, seed data names, test names
+      - test file paths, stack trace line numbers, screenshots
+      - Playwright `test-results`, error-context files, and artifact paths
+
+      If a validation signal appears to require a test-specific workaround,
+      do not implement that workaround. Record it in SELF-CHECK as
+      `OUT_OF_SCOPE_VALIDATION_SIGNAL` and continue with the production
+      behavior supported by the ticket.
+
+      **PHASE_2_CHECKPOINT:**
+      - [ ] Each relevant failure is mapped to a ticket requirement or source
+        behavior
+      - [ ] No planned edit is justified only by visible test mechanics
+      - [ ] Unrelated or out-of-scope validation signals are identified
+
+      ## Phase 3: IMPLEMENT - Make Targeted Production Edits
+
+      Edit only production code needed to satisfy the ticket and address
+      relevant product-level validation symptoms.
+
+      Forbidden:
+      - Reading, creating, modifying, or deleting files under `tests/`, `test/`,
+        `e2e/`, `__tests__/`, or matching `*.test.*` / `*.spec.*`
+      - Editing test fixtures or test configs: `vitest.config.*`,
+        `playwright.config.*`, `jest.config.*`
+      - Running test commands: `npm test`, `npm run test*`, `vitest`,
+        `playwright`, `jest`, `npx` test runners, or direct
+        `node ./node_modules/.bin/...` test runners
+      - Editing generated files, generated directories, or validation artifacts
+        such as `test-results/`
+      - Adding fake IDs, hardcoded fixture behavior, test-only branches,
+        selector-driven UI, weakened auth, weakened validation, or special
+        routes just because validation output exposed them
+      - Using subagents or delegation tools to inspect the codebase
+
+      **PHASE_3_CHECKPOINT:**
+      - [ ] Edits are limited to production source files in ticket scope
+      - [ ] Each edit maps back to an acceptance criterion or production
+        behavior
+      - [ ] No validation-harness workaround was added
+
+      ## Phase 4: VERIFY - Self-Check Without Tests
+
+      Review your changed files manually and with non-test commands only when
+      appropriate. Do not run test runners.
+
+      SELF-CHECK must include:
+      - Requirement mapping: each acceptance criterion and the production
+        behavior implemented for it
+      - Validation interpretation: product-level symptoms inferred from
+        feedback, without selectors, test files, line numbers, screenshots,
+        fixture values, or artifact paths
+      - Scope check: changed files and why each one is within ticket scope
+      - Anti-gaming check: confirm no fake IDs, test selectors, hardcoded
+        fixtures, generated-file edits, auth weakening, or test-specific
+        branches were added
+      - Out-of-scope signals: any validation signal you intentionally did not
+        implement because it was not supported by the ticket
+
+      **PHASE_4_CHECKPOINT:**
+      - [ ] Relevant product-level feedback has been addressed
+      - [ ] Acceptance criteria remain satisfied
+      - [ ] No forbidden files or commands were used
+
+      ## Phase 5: COMMIT - Save Work
+
+      Commit the targeted repair on the current branch.
+
+      ## Success Criteria
+
+      - **AC_COMPLETE**: Every acceptance criterion has corresponding
+        production behavior.
+      - **FEEDBACK_INTERPRETED**: Feedback was translated into product
+        symptoms, not copied into test-shaped implementation.
+      - **SCOPE_DISCIPLINED**: Every changed file is justified by the ticket
+        or existing architecture.
+      - **NO_TEST_GAMING**: No visible validation detail was turned into a
+        test-specific implementation.
+      - **NO_TEST_ACCESS**: No test, fixture, config, generated, or validation
+        artifact files were read or modified; no test runner was executed.
+      - **COMMITTED**: The repair is committed.
 
   - id: validate-2
     depends_on: [ dev-attempt-2 ]
-    when: "$validate-1.output.passed == 'false'"
+    when: "$validate-1.output.passed == 'false' || $parse-dev-review-1.output.passed == 'false'"
     bash: |
       set -euo pipefail
       bash /home/user/Archon/.archon/scripts/task-run-validation.sh
+
+  - id: review-dev-attempt-2
+    depends_on: [ validate-2 ]
+    when: "$validate-1.output.passed == 'false' || $parse-dev-review-1.output.passed == 'false'"
+    context: fresh
+    prompt: |
+      # Review Implementation Repair
+
+      **Input**: `$ARTIFACTS_DIR/dev-review-latest.json`
+
+      ---
+
+      ## Your Mission
+
+      Review the repaired implementation after the second development attempt.
+      Do not edit files. Produce the next durable implementation-quality
+      artifact.
+
+      Read:
+      - `$ARTIFACTS_DIR/task-context.md`
+      - `$ARTIFACTS_DIR/parent-attachments.md`
+      - `$ARTIFACTS_DIR/feedback.json`
+      - `$ARTIFACTS_DIR/dev-review-latest.json`
+      - `git diff origin/main`
+      - Production files changed by the implementation attempts
+
+      Do not read tests, fixtures, Playwright artifacts, screenshots, or
+      error-context files.
+
+      Check every acceptance criterion, prior required repair, scope
+      discipline, architecture risk, and test-gaming risk.
+
+      Write `$ARTIFACTS_DIR/dev-review-2.json` as valid JSON with this shape:
+
+      ```json
+      {
+        "passed": true,
+        "summary": "short review summary",
+        "acceptance_criteria_gaps": [],
+        "scope_violations": [],
+        "architecture_risks": [],
+        "test_gaming_risks": [],
+        "required_repairs": []
+      }
+      ```
+
+      Set `"passed": false` if any required repair remains. Do not modify
+      repository files.
+
+  - id: parse-dev-review-2
+    depends_on: [ review-dev-attempt-2 ]
+    when: "$validate-1.output.passed == 'false' || $parse-dev-review-1.output.passed == 'false'"
+    bash: |
+      set -euo pipefail
+      review="$ARTIFACTS_DIR/dev-review-2.json"
+      latest="$ARTIFACTS_DIR/dev-review-latest.json"
+      if [ ! -f "$review" ]; then
+        printf '{"passed":false,"reason":"missing dev-review-2.json"}'
+        exit 0
+      fi
+      cp "$review" "$latest"
+      bun -e '
+        import { readFileSync } from "node:fs";
+        const review = JSON.parse(readFileSync(process.argv[1], "utf8"));
+        process.stdout.write(JSON.stringify({
+          passed: review.passed === true,
+          required_repairs: Array.isArray(review.required_repairs) ? review.required_repairs.length : 0
+        }));
+      ' -- "$review"
 
   # ─── Last-resort iterative dev loop (only fires when both validates failed) ──
   # Two explicit retries with the cage didn't converge. Drop into a loop node
@@ -252,8 +605,8 @@ nodes:
   # failed; the loop's job is converging on something that passes the gates.
   # The prompt's imperative rules are the only enforcement.
   - id: dev-attempt-loop
-    depends_on: [ validate-2 ]
-    when: "$validate-2.output.passed == 'false'"
+    depends_on: [ validate-2, parse-dev-review-2 ]
+    when: "$validate-2.output.passed == 'false' || $parse-dev-review-2.output.passed == 'false'"
     context: fresh
     loop:
       max_iterations: 5
@@ -280,44 +633,140 @@ nodes:
         fi
         exit 1
       prompt: |
-        Your task is to write code that satisfies every acceptance criterion
-        in `$ARTIFACTS_DIR/task-context.md`, AND fix every failure listed in
-        `$ARTIFACTS_DIR/feedback.json`.
+        # Retry Task Implementation
 
-        Inputs:
-        - `$ARTIFACTS_DIR/task-context.md` — the task summary, description,
-          and acceptance criteria. This is the spec.
-        - `$ARTIFACTS_DIR/parent-attachments.md` — the project's tech stack
-          and conventions.
-        - `$ARTIFACTS_DIR/feedback.json` — quality-gate results from the
-          most recent validation pass. Each entry that says "failed" is a
-          thing for you to fix. After your iteration, validation runs again
-          and feedback.json is rewritten — read it fresh each iteration.
-        - The current branch checkout (cwd is the codebase).
+        **Input**: `$ARTIFACTS_DIR/feedback.json`
 
-        RULES (no ambiguity, no exceptions):
-        - DO NOT READ TESTS. Never open files under `tests/`, `test/`,
-          `e2e/`, `__tests__/`, or matching `*.test.*` / `*.spec.*`.
-        - DO NOT WRITE OR EDIT TESTS. Never create or modify test files,
-          test fixtures, or test configs (vitest.config, playwright.config,
-          jest.config).
-        - DO NOT RUN TESTS. Never invoke `npm test`, `npm run test*`,
-          `vitest`, `playwright`, `jest`, or any test runner — by any path.
-        - AUTOMATIC FAILURE CONDITION: if you create, modify, or delete any
-          file under `tests/`, `test/`, `e2e/`, `__tests__/`, any
-          `*.test.*` / `*.spec.*` file, or `vitest.config.*` /
-          `playwright.config.*` / `jest.config.*`, this iteration is invalid.
-          Do not touch those files.
-        - DO NOT ASK. You have one job, do it.
-        - WRITE CODE that addresses each "failed" entry in feedback.json
-          and satisfies the acceptance criteria, then COMMIT.
+        ---
 
-        When you have committed and believe your work for this iteration
-        is complete, emit `<COMPLETE>done</COMPLETE>` on its own line as
-        the very last thing in your response. The pipeline will then run
-        validation; if it still fails, you will be re-invoked with fresh
-        feedback.json. If you have NOT yet finished writing/committing,
-        do not emit COMPLETE — the loop will iterate again.
+        ## Your Mission
+
+        Continue implementing the product behavior required by
+        `$ARTIFACTS_DIR/task-context.md`. Read the latest
+        `$ARTIFACTS_DIR/feedback.json` each iteration, but treat it only as a
+        symptom report.
+
+        Passing validation is not the direct objective. The objective is to
+        implement the requested product behavior within scope. Use validation
+        only to infer which requirement may still be incomplete.
+
+        ## Phase 1: LOAD - Gather Current Context
+
+        Read:
+        - `$ARTIFACTS_DIR/task-context.md` — task summary, description, and
+          acceptance criteria. This is the implementation spec.
+        - `$ARTIFACTS_DIR/parent-attachments.md` — project tech stack and
+          conventions.
+        - `$ARTIFACTS_DIR/feedback.json` — latest validation output from the
+          previous iteration. It is rewritten after each validation pass.
+        - `$ARTIFACTS_DIR/dev-review-latest.json` — latest
+          implementation-quality review artifact. Address required repairs
+          without reading tests or copying validation mechanics.
+        - Production source files needed to understand the failing behavior.
+
+        Do not read tests, fixtures, Playwright artifacts, screenshots, or
+        error-context files.
+
+        **PHASE_1_CHECKPOINT:**
+        - [ ] Acceptance criteria are loaded
+        - [ ] Latest feedback is translated into product-level symptoms
+        - [ ] No test-shaped artifact has been opened
+
+        ## Phase 2: ANALYZE - Decide What Product Behavior Is Missing
+
+        For each failed gate, map the signal to a likely incomplete product
+        behavior. The acceptance criteria remain the standard for correctness.
+
+        Ignore validation details that are not product requirements:
+        - selectors, data-test IDs, locator text, assertion wording
+        - fake IDs, fixture values, seed data names, test names
+        - test file paths, stack trace line numbers, screenshots
+        - Playwright `test-results`, error-context files, and artifact paths
+
+        If a validation signal appears to require a test-specific workaround,
+        do not implement that workaround. Record it in SELF-CHECK as
+        `OUT_OF_SCOPE_VALIDATION_SIGNAL` and continue with the production
+        behavior supported by the ticket.
+
+        **PHASE_2_CHECKPOINT:**
+        - [ ] Each relevant failure maps to an acceptance criterion or
+          production behavior
+        - [ ] No planned edit is justified only by visible test mechanics
+        - [ ] Unrelated or out-of-scope validation signals are identified
+
+        ## Phase 3: IMPLEMENT - Make Targeted Production Edits
+
+        Edit only production code needed to satisfy the ticket and address
+        relevant product-level validation symptoms.
+
+        Forbidden:
+        - Reading, creating, modifying, or deleting files under `tests/`,
+          `test/`, `e2e/`, `__tests__/`, or matching `*.test.*` / `*.spec.*`
+        - Editing test fixtures or test configs: `vitest.config.*`,
+          `playwright.config.*`, `jest.config.*`
+        - Running test commands: `npm test`, `npm run test*`, `vitest`,
+          `playwright`, `jest`, `npx` test runners, or direct
+          `node ./node_modules/.bin/...` test runners
+        - Editing generated files, generated directories, or validation
+          artifacts such as `test-results/`
+        - Adding fake IDs, hardcoded fixture behavior, test-only branches,
+          selector-driven UI, weakened auth, weakened validation, or special
+          routes just because validation output exposed them
+        - Using subagents or delegation tools to inspect the codebase
+
+        **PHASE_3_CHECKPOINT:**
+        - [ ] Edits are limited to production source files in ticket scope
+        - [ ] Each edit maps back to an acceptance criterion or production
+          behavior
+        - [ ] No validation-harness workaround was added
+
+        ## Phase 4: VERIFY - Self-Check Without Tests
+
+        Review your changed files manually and with non-test commands only
+        when appropriate. Do not run test runners.
+
+        SELF-CHECK must include:
+        - Requirement mapping: each acceptance criterion and the production
+          behavior implemented for it
+        - Validation interpretation: product-level symptoms inferred from
+          feedback, without selectors, test files, line numbers, screenshots,
+          fixture values, or artifact paths
+        - Scope check: changed files and why each one is within ticket scope
+        - Anti-gaming check: confirm no fake IDs, test selectors, hardcoded
+          fixtures, generated-file edits, auth weakening, or test-specific
+          branches were added
+        - Out-of-scope signals: any validation signal you intentionally did not
+          implement because it was not supported by the ticket
+
+        **PHASE_4_CHECKPOINT:**
+        - [ ] Relevant product-level feedback has been addressed
+        - [ ] Acceptance criteria remain satisfied
+        - [ ] No forbidden files or commands were used
+
+        ## Phase 5: COMMIT - Save Work
+
+        Commit the targeted repair on the current branch.
+
+        ## Success Criteria
+
+        - **AC_COMPLETE**: Every acceptance criterion has corresponding
+          production behavior.
+        - **FEEDBACK_INTERPRETED**: Feedback was translated into product
+          symptoms, not copied into test-shaped implementation.
+        - **SCOPE_DISCIPLINED**: Every changed file is justified by the ticket
+          or existing architecture.
+        - **NO_TEST_GAMING**: No visible validation detail was turned into a
+          test-specific implementation.
+        - **NO_TEST_ACCESS**: No test, fixture, config, generated, or
+          validation artifact files were read or modified; no test runner was
+          executed.
+        - **COMMITTED**: The repair is committed.
+
+        When you have committed and believe your work for this iteration is
+        complete, emit `<COMPLETE>done</COMPLETE>` on its own line as the very
+        last thing in your response. The pipeline will then run validation; if
+        it still fails, you will be re-invoked with fresh feedback.json. If
+        you have NOT yet finished writing/committing, do not emit COMPLETE.
 
   # ─── Materialize a final feedback.json after the loop converges ──
   # The loop's until_bash ran validation many times, but the LAST validation
@@ -326,15 +775,127 @@ nodes:
   # and downstream gates have a node to reference (`$validate-loop.output.passed`).
   - id: validate-loop
     depends_on: [ dev-attempt-loop ]
+    trigger_rule: all_done
     bash: |
       set -euo pipefail
       bash /home/user/Archon/.archon/scripts/task-run-validation.sh
 
-  - id: generate-docs
-    depends_on: [ validate-1, validate-2, validate-loop ]
+  - id: review-dev-loop
+    depends_on: [ validate-loop ]
+    when: "$validate-loop.output.passed == 'true'"
+    context: fresh
+    prompt: |
+      # Review Final Loop Implementation
+
+      **Input**: `$ARTIFACTS_DIR/feedback.json`
+
+      ---
+
+      ## Your Mission
+
+      Review the implementation that emerged from the retry loop. Do not edit
+      files. Produce the final implementation-quality artifact for downstream
+      gating.
+
+      Read:
+      - `$ARTIFACTS_DIR/task-context.md`
+      - `$ARTIFACTS_DIR/parent-attachments.md`
+      - `$ARTIFACTS_DIR/feedback.json`
+      - `$ARTIFACTS_DIR/dev-review-latest.json` if present
+      - `git diff origin/main`
+      - Production files changed by the implementation attempts
+
+      Do not read tests, fixtures, Playwright artifacts, screenshots, or
+      error-context files.
+
+      Check every acceptance criterion, prior required repair, scope
+      discipline, architecture risk, and test-gaming risk.
+
+      Write `$ARTIFACTS_DIR/dev-review-loop.json` as valid JSON with this
+      shape:
+
+      ```json
+      {
+        "passed": true,
+        "summary": "short review summary",
+        "acceptance_criteria_gaps": [],
+        "scope_violations": [],
+        "architecture_risks": [],
+        "test_gaming_risks": [],
+        "required_repairs": []
+      }
+      ```
+
+      Set `"passed": false` if any required repair remains. Do not modify
+      repository files.
+
+  - id: parse-dev-review-loop
+    depends_on: [ review-dev-loop ]
+    when: "$validate-loop.output.passed == 'true'"
+    bash: |
+      set -euo pipefail
+      review="$ARTIFACTS_DIR/dev-review-loop.json"
+      latest="$ARTIFACTS_DIR/dev-review-latest.json"
+      if [ ! -f "$review" ]; then
+        printf '{"passed":false,"reason":"missing dev-review-loop.json"}'
+        exit 0
+      fi
+      cp "$review" "$latest"
+      bun -e '
+        import { readFileSync } from "node:fs";
+        const review = JSON.parse(readFileSync(process.argv[1], "utf8"));
+        process.stdout.write(JSON.stringify({
+          passed: review.passed === true,
+          required_repairs: Array.isArray(review.required_repairs) ? review.required_repairs.length : 0
+        }));
+      ' -- "$review"
+
+  - id: implementation-quality-final
+    depends_on: [ parse-dev-review-1, parse-dev-review-2, parse-dev-review-loop ]
     trigger_rule: all_done
-    when: "$validate-1.output.passed == 'true' || $validate-2.output.passed
-      == 'true' || $validate-loop.output.passed == 'true'"
+    bash: |
+      set -euo pipefail
+      final="$ARTIFACTS_DIR/dev-review-final.json"
+      if [ -f "$ARTIFACTS_DIR/dev-review-loop.json" ]; then
+        cp "$ARTIFACTS_DIR/dev-review-loop.json" "$final"
+      elif [ -f "$ARTIFACTS_DIR/dev-review-2.json" ]; then
+        cp "$ARTIFACTS_DIR/dev-review-2.json" "$final"
+      elif [ -f "$ARTIFACTS_DIR/dev-review-1.json" ]; then
+        cp "$ARTIFACTS_DIR/dev-review-1.json" "$final"
+      else
+        printf '{"passed":false,"reason":"missing implementation review artifact","required_repairs":[]}\n' > "$final"
+      fi
+      cp "$final" "$ARTIFACTS_DIR/dev-review-latest.json"
+      bun -e '
+        import { readFileSync } from "node:fs";
+        const review = JSON.parse(readFileSync(process.argv[1], "utf8"));
+        process.stdout.write(JSON.stringify({
+          passed: review.passed === true,
+          required_repairs: Array.isArray(review.required_repairs) ? review.required_repairs.length : 0
+        }));
+      ' -- "$final"
+
+  - id: implementation-ready
+    depends_on: [ validate-1, validate-2, validate-loop, implementation-quality-final ]
+    trigger_rule: all_done
+    bash: |
+      set -euo pipefail
+      validation_passed=false
+      if [ "$validate-1.output.passed" = "true" ] || [ "$validate-2.output.passed" = "true" ] || [ "$validate-loop.output.passed" = "true" ]; then
+        validation_passed=true
+      fi
+      quality_passed="$implementation-quality-final.output.passed"
+      if [ "$validation_passed" = "true" ] && [ "$quality_passed" = "true" ]; then
+        ready=true
+      else
+        ready=false
+      fi
+      printf '{"ready":%s,"validation_passed":%s,"implementation_review_passed":%s,"review":"%s"}\n' \
+        "$ready" "$validation_passed" "$quality_passed" "$ARTIFACTS_DIR/dev-review-final.json"
+
+  - id: generate-docs
+    depends_on: [ implementation-ready ]
+    when: "$implementation-ready.output.ready == 'true'"
     context: fresh
     prompt: |
       Your task is to update user-facing documentation to reflect the changes
@@ -534,10 +1095,16 @@ nodes:
   - id: verify-reviewer-artifacts
     depends_on: [ review-scope, review-code, review-error-handling, review-docs, review-comment-quality ]
     trigger_rule: all_done
+    when: "$verify-pr-ready.output.ready == 'true'"
     bash: |
       # Synthesize must not run unless at least one reviewer artifact exists.
       set -euo pipefail
-      count="$(ls -1 "$ARTIFACTS_DIR/review/"*-findings.md 2>/dev/null | wc -l | tr -d ' ')"
+      review_dir="$ARTIFACTS_DIR/review"
+      mkdir -p "$review_dir"
+      shopt -s nullglob
+      files=("$review_dir/"*-findings.md)
+      shopt -u nullglob
+      count="${#files[@]}"
       if [ "${count:-0}" -lt 1 ]; then
         printf '{"has_findings":"false","count":0}'
         exit 0

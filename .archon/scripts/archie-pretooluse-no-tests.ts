@@ -18,6 +18,10 @@ Tests are owned and run by other pipeline steps (and other agents where applicab
 
 Do not retry with different paths or tools to bypass this.`;
 
+const TOOL_BYPASS_REASON = `Do not delegate this to another agent or task tool.
+
+This node must implement directly in application code only, and must not use delegation to inspect tests/e2e or test tooling.`;
+
 function deny(reason: string): never {
   console.log(
     JSON.stringify({
@@ -76,13 +80,17 @@ const toolInput = input.tool_input ?? {};
 
 if (
   toolName === 'Read' ||
+  toolName === 'ReadFile' ||
   toolName === 'Edit' ||
-  toolName === 'Write' ||
   toolName === 'MultiEdit' ||
+  toolName === 'ApplyPatch' ||
+  toolName === 'Write' ||
+  toolName === 'Delete' ||
   toolName === 'NotebookEdit'
 ) {
   const path =
     (toolInput.file_path as string | undefined) ??
+    (toolInput.path as string | undefined) ??
     (toolInput.notebook_path as string | undefined) ??
     '';
   if (isTestPath(path, hookCwd)) deny(DEV_AGENT_REASON);
@@ -103,7 +111,10 @@ if (toolName === 'LS') {
 }
 
 if (toolName === 'Glob') {
-  const pattern = (toolInput.pattern as string | undefined) ?? '';
+  const pattern =
+    (toolInput.pattern as string | undefined) ??
+    (toolInput.glob_pattern as string | undefined) ??
+    '';
   if (/test|spec|e2e|__tests__/.test(pattern)) deny(DEV_AGENT_REASON);
 }
 
@@ -116,6 +127,12 @@ if (toolName === 'Bash') {
   const cmd = (toolInput.command as string | undefined) ?? '';
   if (bashRunsTests(cmd)) deny(DEV_AGENT_REASON);
   if (bashTouchesTests(cmd)) deny(DEV_AGENT_REASON);
+}
+
+// Block agent delegation on implementation nodes. Subagent prompts can bypass
+// local guardrails and still read tests/e2e indirectly.
+if (toolName === 'Agent' || toolName === 'Task') {
+  deny(TOOL_BYPASS_REASON);
 }
 
 allow();

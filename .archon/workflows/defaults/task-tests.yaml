@@ -120,108 +120,669 @@ nodes:
 
   - id: generate-tests
     depends_on: [ prepare-branch ]
+    context: fresh
     prompt: |
-      Write tests that cover every acceptance criterion in
+      # Generate Task Tests
+
+      **Input**: `$ARTIFACTS_DIR/task-context.md`
+
+      ---
+
+      ## Your Mission
+
+      Write high-signal tests that cover every acceptance criterion in
       `$ARTIFACTS_DIR/task-context.md`.
 
-      Every AC must be covered by at least one test that would FAIL today
-      (the implementation does not exist yet) and PASS once the AC is
-      satisfied. If you cannot translate an AC into a test you can write
-      now, flag it in your final status — do not skip it, do not
-      paraphrase it into something easier to test.
+      Every acceptance criterion must be covered by at least one test that
+      would fail before the implementation exists and pass once the criterion
+      is implemented. Do not paraphrase a criterion into something easier to
+      test. If a criterion cannot be tested with the available project shape,
+      report it explicitly in the final status.
 
-      ## Inputs
+      The tests you write must be clean TypeScript and clean ESLint. A test
+      that fails because the product behavior is missing is good. A test that
+      fails because of a TypeScript error, ESLint error, unused variable,
+      missing import, invalid fixture type, or malformed Playwright/Vitest API
+      usage is invalid.
 
-      - `$ARTIFACTS_DIR/task-context.md` — the task's summary, description,
-        and acceptance criteria. This is the spec.
-      - `$ARTIFACTS_DIR/parent-epic-context.md` (if present) — the parent
-        Epic's framing: PRD highlights, architectural assumptions.
-      - `$ARTIFACTS_DIR/parent-attachments.md` (if present) — full content of
-        attached TechSpec, DesignDoc, STYLE_GUIDE, etc. This is the project's
-        technical truth: chosen stack, file conventions, schema, API
-        contracts, and design tokens.
-      - The current branch checkout (cwd is the codebase). For greenfield
-        tasks the repo will be nearly empty.
+      ## Phase 1: LOAD - Gather Context
 
-      ## What to produce
+      Read:
+      - `$ARTIFACTS_DIR/task-context.md` — task summary, description, and
+        acceptance criteria. This is the test specification.
+      - `$ARTIFACTS_DIR/parent-epic-context.md` if present — parent Epic
+        framing, PRD highlights, and architectural assumptions.
+      - `$ARTIFACTS_DIR/parent-attachments.md` if present — TechSpec,
+        DesignDoc, STYLE_GUIDE, schema, API contracts, design tokens, and
+        project conventions.
+      - Existing project configuration and test patterns needed to write
+        compatible tests.
 
-      1. **Unit tests (Vitest)** for testable units: pure functions, backend
-         mutations/queries/actions, component logic.
-         File path: `tests/<task-id>/<unit-name>.test.ts` (lowercase task-id;
-         match any existing co-located convention in the repo if one exists).
+      **PHASE_1_CHECKPOINT:**
+      - [ ] Every acceptance criterion is listed in your notes
+      - [ ] Existing test framework and file conventions are identified
+      - [ ] TypeScript, ESLint, Vitest, and Playwright conventions are known
 
-      2. **E2E tests (Playwright)** for user-visible behavior: user flows that
-         touch UI, round-trip flows that exercise frontend + backend together.
-         File path: `e2e/<task-id>/<flow-name>.spec.ts` (lowercase).
+      ## Phase 2: PLAN - Map Criteria to Tests
 
-      3. **Test infrastructure** (`vitest.config.ts`, `playwright.config.ts`,
-         tsconfig adjustments) only if needed for your tests to run. Don't
-         add config that isn't used.
+      Create a concise test plan:
+      - Map each acceptance criterion to one or more tests.
+      - Choose Vitest for pure units, backend mutations/queries/actions,
+        component logic, and focused integration seams.
+      - Choose Playwright only for user-visible behavior or end-to-end flows
+        that genuinely require a browser.
+      - Prefer product contracts and observable behavior over implementation
+        details.
+      - Identify any external services that need realistic mocks. Mock only
+        true external services such as AI APIs, OAuth providers, email
+        delivery, payment providers, or network-only integrations.
 
-      4. **Test devDependencies** in `package.json` if missing
-         (vitest, @vitest/ui, playwright, @playwright/test). Be minimal.
-         Install any necessary dependencies that your testing approach
-         requires (run `npm install`, fetch browser binaries, build
-         fixtures, etc.) — your tests must be able to run as soon as you
-         finish.
+      Do not design tests around selectors, fixture values, fake IDs, or
+      implementation guesses unless those details are explicitly required by
+      the ticket or existing public UI/API contract.
 
-      5. **Required npm scripts in `package.json`**:
-            - `"test"`: runs Vitest (e.g., `"vitest run"`)
-            - `"test:e2e"`: runs Playwright (e.g., `"playwright test"`)
-            - `"lint"`: runs ESLint (e.g., `"eslint ."`)
-            - `"typecheck"`: runs TypeScript in no-emit mode (e.g., `"tsc --noEmit"`)
-         If any are missing, add them.
+      **PHASE_2_CHECKPOINT:**
+      - [ ] Every acceptance criterion has planned coverage
+      - [ ] Each test would fail for missing product behavior, not for bad
+        setup
+      - [ ] Playwright is used only where browser behavior is required
+      - [ ] Planned mocks do not mock the system under test
 
-      ## Per-AC test discipline
+      ## Phase 3: GENERATE - Write Tests and Minimal Infrastructure
 
-      One test per acceptance criterion when possible. Name the test by the
-      criterion, verbatim or close to it:
+      Write:
+      - Vitest tests in `tests/<task-id>/<unit-name>.test.ts`, using a
+        lowercase task id. Match an existing co-located convention only if the
+        repo already has one.
+      - Playwright tests in `e2e/<task-id>/<flow-name>.spec.ts`, using a
+        lowercase task id.
+      - Test infrastructure only if needed for the tests to run:
+        `vitest.config.ts`, `playwright.config.ts`, tsconfig adjustments, and
+        minimal `package.json` changes.
+      - Missing test devDependencies only when required: `vitest`,
+        `@vitest/ui`, `playwright`, `@playwright/test`, or project-appropriate
+        helpers. Be minimal.
+      - Required npm scripts if missing:
+        - `"test"`: runs Vitest, for example `vitest run`
+        - `"test:e2e"`: runs Playwright, for example `playwright test`
+        - `"lint"`: runs ESLint, for example `eslint .`
+        - `"typecheck"`: runs TypeScript no-emit, for example `tsc --noEmit`
 
-          test('Running `npm install && npm run dev` starts the Vite dev server without errors', ...)
+      The generated tests must not introduce TypeScript or ESLint failures.
+      Avoid unused imports, unused variables, implicit `any`, incorrect async
+      handling, unreachable code, floating promises, invalid Playwright
+      locators, and imports from modules that cannot be resolved by TypeScript
+      unless the missing module is the intentional red condition for the
+      future implementation.
 
-      ## What NOT to write
+      **PHASE_3_CHECKPOINT:**
+      - [ ] Tests and config changes are limited to test-shaped files
+      - [ ] Each test has a real assertion tied to an acceptance criterion
+      - [ ] No test trivially passes without proving product behavior
+      - [ ] No implementation source file was modified
 
-      - **No implementation code.** Do not edit anything in `src/`, `convex/`,
-        `app/`, or other source directories.
-      - **No fixtures that test trivially.** `expect(true).toBe(true)` would
-        pass without proving anything.
-      - **No mocks of the system under test.** Mock external services
-        (Anthropic API, OAuth providers, email sending) where needed, but
-        never mock the function whose AC you're testing.
-      - **No tests for code that doesn't exist yet AS IF it exists.** It is
-        OK and expected for tests to import modules that don't exist yet —
-        the import will fail at test time, which is the correct red state.
+      ## Phase 4: VERIFY - Run Test-Authoring Quality Gates
 
-      ## For greenfield tasks (e.g., scaffolding)
+      Verify the tests you wrote before finishing.
 
-      If the task is "set up the project," there's nothing for unit tests to
-      target yet. Write:
-      - A trivial Vitest test (`tests/<task-id>/scaffolding.test.ts`) that
-        imports a well-known module (e.g., `import { describe } from 'vitest'`)
-        and asserts something true about the test environment. Proves Vitest
-        is wired correctly.
-      - A Playwright test (`e2e/<task-id>/scaffolding.spec.ts`) that visits
-        `http://localhost:5173/` (Vite default) and asserts a 200 response.
-        Proves the dev server starts.
+      Required checks:
+      - Inspect every changed test for TypeScript and ESLint issues.
+      - Run the project lint command if available after you add or confirm it.
+      - Run the project typecheck command if available after you add or confirm
+        it.
+      - Run the relevant Vitest and Playwright commands if the project can run
+        them locally.
 
-      ## Narration
+      Expected result:
+      - Lint and typecheck must pass for the tests you added.
+      - The behavior tests may fail because the implementation is missing.
+        That is the desired red state.
+      - Do not make tests pass by weakening assertions, mocking the system
+        under test, or changing implementation source.
 
-      Tell the user what you're doing as you work:
-      - which ACs you're translating into which kinds of tests
-      - any architectural decisions
-      - any gaps you noticed in the task description
+      If lint/typecheck fails because of your tests, fix the tests before
+      finishing. If lint/typecheck fails only because of unrelated pre-existing
+      source errors, report that distinction clearly.
 
-      ## When done
+      **PHASE_4_CHECKPOINT:**
+      - [ ] Generated tests have no ESLint errors
+      - [ ] Generated tests have no TypeScript errors except intentional
+        missing implementation imports required for red-state coverage
+      - [ ] Behavior failures are due to missing implementation, not broken
+        test code
+      - [ ] Any unrelated pre-existing failures are identified separately
 
-      Output a one-line status:
+      ## Phase 5: REPORT - Summarize Coverage
 
-          Wrote N test files: <list>.
+      Output a concise final status:
+      - Test files written
+      - Acceptance criteria covered by each file
+      - Lint/typecheck commands run and their result
+      - Test commands run and whether failures are expected red-state product
+        failures
+      - Any acceptance criteria that could not be translated into valid tests
+
+      ## Rules
+
+      - No implementation code. Do not edit anything in `src/`, `convex/`,
+        `app/`, or other production source directories.
+      - No fixtures that test trivially. `expect(true).toBe(true)` is not
+        acceptable except for explicit greenfield scaffolding smoke tests.
+      - No mocks of the system under test. Mock external services only.
+      - No test-harness gaming. Do not encode assumptions solely from likely
+        validation mechanics, generated selectors, fake IDs, or fixture names.
+      - No dirty test quality. Do not leave unused variables, unused imports,
+        TypeScript errors, ESLint errors, invalid async handling, or invalid
+        Playwright/Vitest API usage.
+
+      ## Greenfield Tasks
+
+      If the task is project scaffolding and there is no product behavior to
+      target yet:
+      - Write a Vitest smoke test at `tests/<task-id>/scaffolding.test.ts`
+        that imports Vitest and asserts the test environment is wired.
+      - Write a Playwright smoke test at `e2e/<task-id>/scaffolding.spec.ts`
+        that visits the default local app URL and asserts a successful
+        response or visible starter UI.
+      - Keep these smoke tests lint-clean and typecheck-clean.
+
+      ## Success Criteria
+
+      - **AC_COVERAGE**: Every acceptance criterion has meaningful test
+        coverage or an explicit untestable note.
+      - **RED_FOR_RIGHT_REASON**: Tests fail only because product behavior is
+        missing, not because the tests are broken.
+      - **TYPECHECK_CLEAN**: Generated tests do not introduce TypeScript
+        errors, except intentional missing implementation imports required for
+        a red-state test.
+      - **LINT_CLEAN**: Generated tests do not introduce ESLint errors.
+      - **NO_IMPLEMENTATION_EDITS**: Production source files are untouched.
+      - **COMMITTED_READY**: The generated test suite is ready for the
+        deterministic implementation workflow.
+
+  - id: review-generated-tests-1
+    depends_on: [ generate-tests ]
+    context: fresh
+    prompt: |
+      # Review Generated Tests
+
+      **Input**: `$ARTIFACTS_DIR/task-context.md`
+
+      ---
+
+      ## Your Mission
+
+      Review the tests generated for this task against the acceptance criteria.
+      Do not edit files. Produce a durable artifact for downstream repair and
+      validation nodes.
+
+      The artifact you write is the specification for the next step. Be
+      precise enough that a repair agent can act without hidden context.
+
+      ## Phase 1: LOAD - Gather Review Inputs
+
+      Read:
+      - `$ARTIFACTS_DIR/task-context.md`
+      - `$ARTIFACTS_DIR/parent-epic-context.md` if present
+      - `$ARTIFACTS_DIR/parent-attachments.md` if present
+      - Generated test files under `tests/` and `e2e/`
+      - Test configuration and package scripts changed by this workflow
+
+      **PHASE_1_CHECKPOINT:**
+      - [ ] Acceptance criteria are loaded
+      - [ ] Generated test files are identified
+      - [ ] Relevant test config changes are identified
+
+      ## Phase 2: REVIEW - Evaluate Test Quality
+
+      Evaluate:
+      - Does every acceptance criterion have meaningful coverage?
+      - Would each test fail for the missing product behavior, not because the
+        test is malformed?
+      - Are tests based on product contracts and observable behavior?
+      - Are Playwright tests limited to browser-visible behavior?
+      - Are mocks limited to external services?
+      - Are assertions strong enough to guide implementation?
+      - Are there obvious TypeScript or ESLint problems in the generated tests?
+      - Are any tests likely to push the implementation agent toward
+        test-harness gaming, fake IDs, selectors, or fixture-specific behavior?
+
+      **PHASE_2_CHECKPOINT:**
+      - [ ] AC coverage gaps are listed
+      - [ ] Weak or misleading tests are listed
+      - [ ] Mechanical test-quality risks are listed
+      - [ ] Test-gaming risks are listed
+
+      ## Phase 3: WRITE - Save Review Artifact
+
+      Write `$ARTIFACTS_DIR/test-review-1.json` as valid JSON with this shape:
+
+      ```json
+      {
+        "passed": true,
+        "summary": "short review summary",
+        "coverage_gaps": [],
+        "weak_tests": [],
+        "lint_typecheck_risks": [],
+        "gaming_risks": [],
+        "required_repairs": []
+      }
+      ```
+
+      Set `"passed": false` if any required repair remains.
+
+      Each item in `required_repairs` must include:
+      - `file`
+      - `issue`
+      - `required_change`
+      - `acceptance_criterion`
+
+      ## Success Criteria
+
+      - **ARTIFACT_WRITTEN**: `$ARTIFACTS_DIR/test-review-1.json` exists and
+        is valid JSON.
+      - **AC_REVIEWED**: Every acceptance criterion was checked.
+      - **ACTIONABLE**: Every required repair names a file and change.
+      - **NO_EDITS**: No repository files were modified by this review.
+
+  - id: parse-test-review-1
+    depends_on: [ review-generated-tests-1 ]
+    bash: |
+      set -euo pipefail
+      review="$ARTIFACTS_DIR/test-review-1.json"
+      if [ ! -f "$review" ]; then
+        printf '{"passed":false,"reason":"missing test-review-1.json"}'
+        exit 0
+      fi
+      bun -e '
+        import { readFileSync } from "node:fs";
+        const review = JSON.parse(readFileSync(process.argv[1], "utf8"));
+        process.stdout.write(JSON.stringify({
+          passed: review.passed === true,
+          required_repairs: Array.isArray(review.required_repairs) ? review.required_repairs.length : 0
+        }));
+      ' -- "$review"
+
+  - id: repair-tests-from-review
+    depends_on: [ parse-test-review-1 ]
+    when: "$parse-test-review-1.output.passed == 'false'"
+    context: fresh
+    prompt: |
+      # Repair Tests From Review
+
+      **Input**: `$ARTIFACTS_DIR/test-review-1.json`
+
+      ---
+
+      ## Your Mission
+
+      Repair generated tests according to `$ARTIFACTS_DIR/test-review-1.json`.
+      Preserve acceptance-criterion coverage while removing weak, misleading,
+      or test-harness-shaped behavior.
+
+      ## Phase 1: LOAD - Read Repair Spec
+
+      Read:
+      - `$ARTIFACTS_DIR/task-context.md`
+      - `$ARTIFACTS_DIR/test-review-1.json`
+      - Generated tests and test config files named in the review
+
+      **PHASE_1_CHECKPOINT:**
+      - [ ] Every required repair is understood
+      - [ ] Each repair is mapped to a generated test or test config file
+      - [ ] No production source file is in scope
+
+      ## Phase 2: IMPLEMENT - Repair Test Artifacts
+
+      Edit only generated tests, fixtures, test configuration, or minimal test
+      tooling.
+
+      Forbidden:
+      - Editing production implementation files under `src/`, `convex/`,
+        `app/`, or equivalent source directories
+      - Removing acceptance-criterion coverage
+      - Weakening assertions just to avoid red-state failures
+      - Mocking the system under test
+      - Encoding fake IDs, selectors, or fixture-specific behavior unless they
+        are part of the public product contract
+
+      **PHASE_2_CHECKPOINT:**
+      - [ ] Review-required repairs are implemented
+      - [ ] AC coverage is preserved or improved
+      - [ ] No implementation source files were edited
+
+      ## Phase 3: REPORT - Summarize
+
+      Summarize files changed and which review items were repaired.
+
+      ## Success Criteria
+
+      - **REVIEW_REPAIRED**: Every actionable review item was addressed.
+      - **AC_COVERAGE_PRESERVED**: Tests still cover the acceptance criteria.
+      - **NO_IMPLEMENTATION_EDITS**: Production source files are untouched.
+
+  - id: review-generated-tests-2
+    depends_on: [ repair-tests-from-review ]
+    when: "$parse-test-review-1.output.passed == 'false'"
+    context: fresh
+    prompt: |
+      # Re-Review Generated Tests
+
+      **Input**: `$ARTIFACTS_DIR/test-review-1.json`
+
+      ---
+
+      ## Your Mission
+
+      Re-review the generated tests after repairs. Do not edit files. Write a
+      final review artifact for the deterministic gate.
+
+      Read:
+      - `$ARTIFACTS_DIR/task-context.md`
+      - `$ARTIFACTS_DIR/test-review-1.json`
+      - Generated tests under `tests/` and `e2e/`
+      - Test configuration and package scripts changed by this workflow
+
+      Check every acceptance criterion, weak test, lint/typecheck risk, and
+      test-gaming risk from the first review.
+
+      Write `$ARTIFACTS_DIR/test-review-2.json` as valid JSON with this shape:
+
+      ```json
+      {
+        "passed": true,
+        "summary": "short review summary",
+        "coverage_gaps": [],
+        "weak_tests": [],
+        "lint_typecheck_risks": [],
+        "gaming_risks": [],
+        "required_repairs": []
+      }
+      ```
+
+      Set `"passed": false` if any required repair remains. Do not modify
+      repository files.
+
+  - id: parse-test-review-final
+    depends_on: [ parse-test-review-1, review-generated-tests-2 ]
+    trigger_rule: all_done
+    bash: |
+      set -euo pipefail
+      final="$ARTIFACTS_DIR/test-review.json"
+      if [ -f "$ARTIFACTS_DIR/test-review-2.json" ]; then
+        cp "$ARTIFACTS_DIR/test-review-2.json" "$final"
+      elif [ -f "$ARTIFACTS_DIR/test-review-1.json" ]; then
+        cp "$ARTIFACTS_DIR/test-review-1.json" "$final"
+      else
+        printf '{"passed":false,"reason":"missing test review artifact","required_repairs":[]}\n' > "$final"
+      fi
+      bun -e '
+        import { readFileSync } from "node:fs";
+        const review = JSON.parse(readFileSync(process.argv[1], "utf8"));
+        process.stdout.write(JSON.stringify({
+          passed: review.passed === true,
+          required_repairs: Array.isArray(review.required_repairs) ? review.required_repairs.length : 0
+        }));
+      ' -- "$final"
+
+  - id: validate-generated-tests-1
+    depends_on: [ parse-test-review-final ]
+    bash: |
+      # Test-gen owns test quality. The implementation agent is forbidden from
+      # editing tests, so lint/typecheck issues in generated tests must be
+      # caught and repaired before handoff.
+      set -euo pipefail
+      export ARTIFACTS_DIR="$ARTIFACTS_DIR"
+      report="$ARTIFACTS_DIR/test-gen-quality-report.json"
+      lint_log="$ARTIFACTS_DIR/test-gen-lint.log"
+      typecheck_log="$ARTIFACTS_DIR/test-gen-typecheck.log"
+
+      review_passed="$parse-test-review-final.output.passed"
+      if [ "$review_passed" != "true" ]; then
+        printf '{"passed":false,"lint":"skipped","typecheck":"skipped","reason":"test_review_failed","review":"%s"}\n' "$ARTIFACTS_DIR/test-review.json" > "$report"
+        cat "$report"
+        exit 0
+      fi
+
+      if [ ! -f package.json ]; then
+        printf '{"passed":false,"lint":"failed","typecheck":"failed","reason":"missing package.json"}' > "$report"
+        cat "$report"
+        exit 0
+      fi
+
+      has_script() {
+        bun -e '
+          import { readFileSync } from "node:fs";
+          const pkg = JSON.parse(readFileSync("package.json", "utf8"));
+          process.exit(pkg.scripts?.[process.argv[1]] ? 0 : 1);
+        ' -- "$1"
+      }
+
+      lint_status="missing"
+      typecheck_status="missing"
+
+      if has_script lint; then
+        if npm run lint > "$lint_log" 2>&1; then
+          lint_status="passed"
+        else
+          lint_status="failed"
+        fi
+      else
+        printf 'Missing package.json script: lint\n' > "$lint_log"
+      fi
+
+      if has_script typecheck; then
+        if npm run typecheck > "$typecheck_log" 2>&1; then
+          typecheck_status="passed"
+        else
+          typecheck_status="failed"
+        fi
+      else
+        printf 'Missing package.json script: typecheck\n' > "$typecheck_log"
+      fi
+
+      if [ "$lint_status" = "passed" ] && [ "$typecheck_status" = "passed" ]; then
+        passed=true
+      else
+        passed=false
+      fi
+
+      printf '{"passed":%s,"lint":"%s","typecheck":"%s","lint_log":"%s","typecheck_log":"%s"}\n' \
+        "$passed" "$lint_status" "$typecheck_status" "$lint_log" "$typecheck_log" > "$report"
+      cat "$report"
+
+  - id: repair-generated-tests
+    depends_on: [ validate-generated-tests-1 ]
+    when: "$validate-generated-tests-1.output.passed == 'false' && $validate-generated-tests-1.output.reason != 'test_review_failed'"
+    context: fresh
+    prompt: |
+      # Repair Generated Tests
+
+      **Input**: `$ARTIFACTS_DIR/test-gen-quality-report.json`
+
+      ---
+
+      ## Your Mission
+
+      Fix the generated tests and test infrastructure so they are clean under
+      the project's lint and typecheck commands.
+
+      The implementation agent cannot edit tests. You own all ESLint and
+      TypeScript correctness for files generated by this workflow.
+
+      ## Phase 1: LOAD - Inspect Quality Failures
+
+      Read:
+      - `$ARTIFACTS_DIR/task-context.md`
+      - `$ARTIFACTS_DIR/test-gen-quality-report.json`
+      - `$ARTIFACTS_DIR/test-gen-lint.log` if lint failed
+      - `$ARTIFACTS_DIR/test-gen-typecheck.log` if typecheck failed
+      - The generated test files and test configuration files
+
+      **PHASE_1_CHECKPOINT:**
+      - [ ] Lint and typecheck failures are identified
+      - [ ] Each failure is mapped to a generated test or test config file
+      - [ ] No production implementation source is in scope
+
+      ## Phase 2: PLAN - Choose Minimal Test Repairs
+
+      Plan repairs that preserve acceptance-criterion coverage and red-state
+      behavior.
+
+      Acceptable repairs:
+      - remove unused imports or variables
+      - fix invalid types, missing annotations, and fixture shapes
+      - fix incorrect Vitest or Playwright API usage
+      - fix async handling, floating promises, and unreachable code
+      - adjust test config or package scripts needed for lint/typecheck
+      - replace brittle helper code with type-safe test helpers
+
+      Forbidden repairs:
+      - editing production implementation files under `src/`, `convex/`,
+        `app/`, or equivalent source directories
+      - weakening assertions just to make tests pass
+      - mocking the system under test
+      - deleting acceptance-criterion coverage
+      - suppressing lint or type errors with broad disables, `any`, or
+        `@ts-ignore` unless narrowly justified by an external library type gap
+
+      **PHASE_2_CHECKPOINT:**
+      - [ ] The plan fixes test quality without reducing coverage
+      - [ ] No production source edit is planned
+      - [ ] No broad suppression is planned
+
+      ## Phase 3: IMPLEMENT - Repair Test Files Only
+
+      Edit only generated test files, test fixtures, test config, and minimal
+      package test tooling.
+
+      **PHASE_3_CHECKPOINT:**
+      - [ ] ESLint issues from generated tests are fixed
+      - [ ] TypeScript issues from generated tests are fixed
+      - [ ] Acceptance-criterion assertions remain meaningful
+
+      ## Phase 4: VERIFY - Run Quality Commands
+
+      Run:
+      - `npm run lint`
+      - `npm run typecheck`
+
+      If either command still fails because of generated tests, keep fixing.
+      If either command fails only because of unrelated pre-existing source
+      issues, report that clearly.
+
+      **PHASE_4_CHECKPOINT:**
+      - [ ] Generated tests have no ESLint errors
+      - [ ] Generated tests have no TypeScript errors except intentional
+        missing implementation imports required for red-state coverage
+      - [ ] Any unrelated pre-existing failures are separated from generated
+        test failures
+
+      ## Phase 5: REPORT - Finish
+
+      Summarize:
+      - files repaired
+      - lint result
+      - typecheck result
+      - any remaining unrelated pre-existing failures
+
+      ## Success Criteria
+
+      - **LINT_CLEAN**: Generated tests do not introduce ESLint errors.
+      - **TYPECHECK_CLEAN**: Generated tests do not introduce TypeScript
+        errors except intentional red-state missing implementation imports.
+      - **AC_COVERAGE_PRESERVED**: Repairs did not remove meaningful
+        acceptance-criterion coverage.
+      - **NO_IMPLEMENTATION_EDITS**: Production source files are untouched.
+
+  - id: validate-generated-tests-2
+    depends_on: [ repair-generated-tests ]
+    when: "$validate-generated-tests-1.output.passed == 'false' && $validate-generated-tests-1.output.reason != 'test_review_failed'"
+    bash: |
+      # Re-run test quality after the repair pass. This overwrites the same
+      # report so downstream nodes only need to read one final artifact.
+      set -euo pipefail
+      export ARTIFACTS_DIR="$ARTIFACTS_DIR"
+      report="$ARTIFACTS_DIR/test-gen-quality-report.json"
+      lint_log="$ARTIFACTS_DIR/test-gen-lint.log"
+      typecheck_log="$ARTIFACTS_DIR/test-gen-typecheck.log"
+
+      if [ ! -f package.json ]; then
+        printf '{"passed":false,"lint":"failed","typecheck":"failed","reason":"missing package.json"}' > "$report"
+        cat "$report"
+        exit 0
+      fi
+
+      has_script() {
+        bun -e '
+          import { readFileSync } from "node:fs";
+          const pkg = JSON.parse(readFileSync("package.json", "utf8"));
+          process.exit(pkg.scripts?.[process.argv[1]] ? 0 : 1);
+        ' -- "$1"
+      }
+
+      lint_status="missing"
+      typecheck_status="missing"
+
+      if has_script lint; then
+        if npm run lint > "$lint_log" 2>&1; then
+          lint_status="passed"
+        else
+          lint_status="failed"
+        fi
+      else
+        printf 'Missing package.json script: lint\n' > "$lint_log"
+      fi
+
+      if has_script typecheck; then
+        if npm run typecheck > "$typecheck_log" 2>&1; then
+          typecheck_status="passed"
+        else
+          typecheck_status="failed"
+        fi
+      else
+        printf 'Missing package.json script: typecheck\n' > "$typecheck_log"
+      fi
+
+      if [ "$lint_status" = "passed" ] && [ "$typecheck_status" = "passed" ]; then
+        passed=true
+      else
+        passed=false
+      fi
+
+      printf '{"passed":%s,"lint":"%s","typecheck":"%s","lint_log":"%s","typecheck_log":"%s"}\n' \
+        "$passed" "$lint_status" "$typecheck_status" "$lint_log" "$typecheck_log" > "$report"
+      cat "$report"
 
   - id: verify-tests-exist
-    depends_on: [ generate-tests ]
+    depends_on: [ validate-generated-tests-1, validate-generated-tests-2 ]
+    trigger_rule: all_done
     bash: |
-      # Halt if the test-gen agent didn't actually write any test files.
+      # Do not hand off tests that break lint/typecheck. The implementation
+      # workflow is intentionally not allowed to repair generated tests.
       set -euo pipefail
+      quality_report="$ARTIFACTS_DIR/test-gen-quality-report.json"
+      quality_passed="$(bun -e '
+        import { readFileSync } from "node:fs";
+        const report = JSON.parse(readFileSync(process.argv[1], "utf8"));
+        process.stdout.write(report.passed === true ? "true" : "false");
+      ' -- "$quality_report" 2>/dev/null || echo false)"
+      if [ "$quality_passed" != "true" ]; then
+        echo "Generated tests failed lint/typecheck quality gate. See $quality_report."
+        exit 1
+      fi
+
+      review_passed="$(bun -e '
+        import { readFileSync } from "node:fs";
+        const report = JSON.parse(readFileSync(process.argv[1], "utf8"));
+        process.stdout.write(report.passed === true ? "true" : "false");
+      ' -- "$ARTIFACTS_DIR/test-review.json" 2>/dev/null || echo false)"
+      if [ "$review_passed" != "true" ]; then
+        echo "Generated tests failed acceptance-criteria review. See $ARTIFACTS_DIR/test-review.json."
+        exit 1
+      fi
+
+      # Halt if the test-gen agent didn't actually write any test files.
       export ARTIFACTS_DIR="$ARTIFACTS_DIR"
       bun /home/user/Archon/.archon/scripts/task-verify-tests-exist.ts > "$ARTIFACTS_DIR/test-files-report.json.tmp"
       # The script writes the JSON to stdout PRECEDED by narration on stdout.

@@ -12,6 +12,15 @@
 #   ARTIFACTS_DIR  — workflow's artifacts directory
 #   ISSUE_KEY      — Jira ticket key (selects which test scope to run)
 #
+# Policy:
+# - Blocking gates for task-implement are the ticket-scoped test suites
+#   (Vitest + Playwright under ISSUE_KEY scope).
+# - Lint/typecheck are blocking only when failures reference THIS ticket's
+#   scope: files under tests/<ISSUE_KEY>/ and e2e/<ISSUE_KEY>/ (case-insensitive),
+#   OR files that appear in git diff baseline..HEAD for this run (so prod code
+#   the dev touched is still enforced). Failures that only mention other
+#   tickets' tests (e.g. tests/wor-41) are logged but non-blocking.
+#
 set -uo pipefail
 
 # Redirect ALL of this script's narrative output (gate banners, tail dumps,
@@ -22,6 +31,35 @@ set -uo pipefail
 exec 3>&1 1>&2
 
 ARTIFACTS_DIR="${ARTIFACTS_DIR:?ARTIFACTS_DIR not set}"
+
+# Pin validation to the same checkout/worktree for the entire run.
+# First validation call records repo root; subsequent calls must match.
+CURRENT_REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+WORKTREE_PIN_FILE="$ARTIFACTS_DIR/.validation-worktree-root"
+if [ -f "$WORKTREE_PIN_FILE" ]; then
+  EXPECTED_REPO_ROOT="$(cat "$WORKTREE_PIN_FILE")"
+  if [ "$CURRENT_REPO_ROOT" != "$EXPECTED_REPO_ROOT" ]; then
+    echo "Validation checkout mismatch." >&2
+    echo "Expected repo root: $EXPECTED_REPO_ROOT" >&2
+    echo "Current repo root:  $CURRENT_REPO_ROOT" >&2
+    exit 1
+  fi
+else
+  printf '%s' "$CURRENT_REPO_ROOT" > "$WORKTREE_PIN_FILE"
+fi
+
+# Capture a stable baseline commit for this workflow run so we can attribute
+# lint/typecheck failures to "files changed by this implementation attempt set".
+BASELINE_SHA_FILE="$ARTIFACTS_DIR/.validation-baseline-sha"
+if [ -f "$BASELINE_SHA_FILE" ]; then
+  BASELINE_SHA="$(cat "$BASELINE_SHA_FILE")"
+else
+  BASELINE_SHA="$(git rev-parse HEAD)"
+  printf '%s' "$BASELINE_SHA" > "$BASELINE_SHA_FILE"
+fi
+
+CHANGED_FILES_FILE="$ARTIFACTS_DIR/.validation-changed-files.txt"
+git diff --name-only "$BASELINE_SHA"...HEAD > "$CHANGED_FILES_FILE" || true
 
 # Read ISSUE_KEY from the trigger payload — single source of truth, written
 # once by the decode node, no env-var passing or shell-quoting concerns.
@@ -75,8 +113,8 @@ CANONICAL_REPORT="$ARTIFACTS_DIR/feedback.json"
 GATES_JSON="[]"
 
 add_gate() {
-  local name="$1" status="$2" log_file="$3"
-  GATES_JSON=$(NAME="$name" STATUS="$status" LOG_FILE="$log_file" GATES_JSON="$GATES_JSON" bun -e '
+  local name="$1" status="$2" log_file="$3" blocking="$4" relevant="$5"
+  GATES_JSON=$(NAME="$name" STATUS="$status" LOG_FILE="$log_file" BLOCKING="$blocking" RELEVANT="$relevant" GATES_JSON="$GATES_JSON" bun -e '
     import { readFileSync } from "node:fs";
     const gates = JSON.parse(process.env.GATES_JSON || "[]");
     let log = "";
@@ -85,6 +123,8 @@ add_gate() {
     gates.push({
       name: process.env.NAME,
       status: process.env.STATUS,
+      blocking: process.env.BLOCKING === "true",
+      relevant_to_changed_files: process.env.RELEVANT === "true",
       log: log.length > 8000 ? log.slice(-8000) : log,
     });
     console.log(JSON.stringify(gates));
@@ -92,7 +132,7 @@ add_gate() {
 }
 
 run_gate() {
-  local name="$1" cmd="$2"
+  local name="$1" cmd="$2" blocking="${3:-false}" relevant="${4:-false}"
   local log_file="$ATTEMPT_RESULTS_DIR/${name}.log"
 
   echo "──────────────────────────────────────────────────────────────────"
@@ -102,12 +142,12 @@ run_gate() {
   local rc=$?
   if [ $rc -eq 0 ]; then
     echo "✓ $name PASSED"
-    add_gate "$name" "passed" "$log_file"
+    add_gate "$name" "passed" "$log_file" "$blocking" "$relevant"
     return 0
   else
     echo "✗ $name FAILED (exit $rc). Last 40 lines of output:"
     tail -40 "$log_file" | sed 's/^/  /'
-    add_gate "$name" "failed" "$log_file"
+    add_gate "$name" "failed" "$log_file" "$blocking" "$relevant"
     return 1
   fi
 }
@@ -115,7 +155,7 @@ run_gate() {
 skip_gate() {
   local name="$1" reason="$2"
   echo "── SKIP: $name ($reason) ──"
-  add_gate "$name" "skipped" "/dev/null"
+  add_gate "$name" "skipped" "/dev/null" "false" "false"
 }
 
 has_script() {
@@ -132,6 +172,126 @@ has_script() {
 
 OVERALL=0
 
+# Exit 0 if lint/typecheck log contains at least one failure in this ticket's
+# scope (tests/<key>/, e2e/<key>/) or in a file changed since baseline..HEAD.
+log_has_task_scoped_failures() {
+  local log_file="$1"
+  CHANGED_FILES_FILE="$CHANGED_FILES_FILE" LOG_FILE="$log_file" REPO_ROOT="$CURRENT_REPO_ROOT" ISSUE_KEY="$ISSUE_KEY" bun -e '
+    import { readFileSync } from "node:fs";
+
+    const issueKey = process.env.ISSUE_KEY ?? "";
+    const issueLc = issueKey.toLowerCase();
+    const repoRoot = (process.env.REPO_ROOT ?? "").replace(/\/+$/, "");
+    const logPath = process.env.LOG_FILE;
+    const changedPath = process.env.CHANGED_FILES_FILE;
+    if (!logPath || !changedPath) process.exit(1);
+    const log = readFileSync(logPath, "utf8");
+    const changedRaw = readFileSync(changedPath, "utf8");
+    const changed = new Set(
+      changedRaw
+        .split(/\r?\n/)
+        .map((s) => s.trim().replace(/\\/g, "/"))
+        .filter(Boolean),
+    );
+
+    function toRel(p) {
+      let s = p.trim().replace(/\\/g, "/");
+      if (repoRoot && s.startsWith(repoRoot + "/")) s = s.slice(repoRoot.length + 1);
+      return s;
+    }
+
+    function inTicketTestScope(rel) {
+      const a = rel.toLowerCase();
+      const seg1 = "tests/" + issueLc + "/";
+      const seg2 = "e2e/" + issueLc + "/";
+      const seg3 = "tests/" + issueKey + "/";
+      const seg4 = "e2e/" + issueKey + "/";
+      return (
+        a.includes(seg1) ||
+        a.includes(seg2) ||
+        a.includes(seg3.toLowerCase()) ||
+        a.includes(seg4.toLowerCase())
+      );
+    }
+
+    const seen = new Set();
+    function addPath(raw) {
+      const rel = toRel(raw);
+      if (
+        rel &&
+        (rel.endsWith(".ts") ||
+          rel.endsWith(".tsx") ||
+          rel.endsWith(".js") ||
+          rel.endsWith(".jsx") ||
+          rel.endsWith(".mjs") ||
+          rel.endsWith(".cjs"))
+      )
+        seen.add(rel);
+    }
+
+    // TypeScript: path(line,col): error
+    for (const m of log.matchAll(
+      /([^\s(]+\.(?:tsx?|jsx?|mjs|cjs))\((\d+),(\d+)\):\s*(?:error|warning)/gi,
+    )) {
+      addPath(m[1]);
+    }
+    // TypeScript / ESLint: path:line:col
+    for (const m of log.matchAll(/([^\s:]+\.(?:tsx?|jsx?|mjs|cjs)):\d+:\d+/g)) {
+      addPath(m[1]);
+    }
+    // ESLint stylish: path-only line (often absolute)
+    for (const m of log.matchAll(/^\s*(\/[^\s()]+\.(?:tsx?|jsx?|mjs|cjs))\s*$/gm)) {
+      addPath(m[1]);
+    }
+
+    let blocking = false;
+    for (const rel of seen) {
+      if (inTicketTestScope(rel)) {
+        blocking = true;
+        break;
+      }
+      if (changed.has(rel)) {
+        blocking = true;
+        break;
+      }
+    }
+
+    process.exit(blocking ? 0 : 1);
+  ' 2>/dev/null
+}
+
+run_quality_gate_task_scoped() {
+  local name="$1" cmd="$2"
+  local log_file="$ATTEMPT_RESULTS_DIR/${name}.log"
+  local rc=0
+  local relevant="false"
+  local blocking="false"
+
+  echo "──────────────────────────────────────────────────────────────────"
+  echo "GATE: $name"
+  echo "──────────────────────────────────────────────────────────────────"
+  bash -c "$cmd" > "$log_file" 2>&1 || rc=$?
+
+  if [ "$rc" -eq 0 ]; then
+    echo "✓ $name PASSED"
+    add_gate "$name" "passed" "$log_file" "false" "false"
+    return 0
+  fi
+
+  echo "✗ $name FAILED (exit $rc). Last 40 lines of output:"
+  tail -40 "$log_file" | sed 's/^/  /'
+  if log_has_task_scoped_failures "$log_file"; then
+    relevant="true"
+    blocking="true"
+    OVERALL=1
+    echo "✗ $name has failures in this ticket scope or in changed files (blocking)."
+  else
+    echo "ℹ $name failed only outside this ticket scope (non-blocking)."
+  fi
+  add_gate "$name" "failed" "$log_file" "$blocking" "$relevant"
+  return 0
+}
+
 # 0. Deterministic generated-test cleanup
 #
 # Test-gen may temporarily suppress red-state missing implementation imports
@@ -142,18 +302,22 @@ OVERALL=0
 cleanup_log="$ATTEMPT_RESULTS_DIR/obsolete-ts-expect-error-cleanup.log"
 if bun /home/user/Archon/.archon/scripts/task-cleanup-obsolete-ts-expect-error.ts > "$cleanup_log" 2>&1; then
   echo "✓ obsolete-ts-expect-error cleanup completed"
-  add_gate "obsolete-ts-expect-error-cleanup" "passed" "$cleanup_log"
+  add_gate "obsolete-ts-expect-error-cleanup" "passed" "$cleanup_log" "false" "false"
 else
   echo "✗ obsolete-ts-expect-error cleanup failed. Last 40 lines of output:"
   tail -40 "$cleanup_log" | sed 's/^/  /'
-  add_gate "obsolete-ts-expect-error-cleanup" "failed" "$cleanup_log"
+  add_gate "obsolete-ts-expect-error-cleanup" "failed" "$cleanup_log" "true" "true"
   OVERALL=1
 fi
+
+# The cleanup may have committed generated-test fixes. Refresh the changed-file
+# attribution set before lint/typecheck decide which failures are blocking.
+git diff --name-only "$BASELINE_SHA"...HEAD > "$CHANGED_FILES_FILE" || true
 echo
 
 # 1. Lint
 if has_script lint; then
-  run_gate "lint" "npm run lint" || OVERALL=1
+  run_quality_gate_task_scoped "lint" "npm run lint"
 else
   skip_gate "lint" "no script in package.json"
 fi
@@ -161,7 +325,7 @@ echo
 
 # 2. Typecheck
 if has_script typecheck; then
-  run_gate "typecheck" "npm run typecheck" || OVERALL=1
+  run_quality_gate_task_scoped "typecheck" "npm run typecheck"
 else
   skip_gate "typecheck" "no script in package.json"
 fi
@@ -169,7 +333,7 @@ echo
 
 # 3. Vitest scoped to this ticket's tests (case-insensitive dir resolution)
 if [ -d "$VITEST_DIR" ]; then
-  run_gate "vitest" "npx vitest run $VITEST_DIR --reporter=default" || OVERALL=1
+  run_gate "vitest" "npx vitest run $VITEST_DIR --reporter=default" "true" "true" || OVERALL=1
 else
   skip_gate "vitest" "$VITEST_DIR/ does not exist"
 fi
@@ -182,7 +346,7 @@ echo
 # missing-binary error, which is correct: the dev agent shipped a broken
 # setup and the failure is real signal it must address on the next attempt.
 if [ -d "$PLAYWRIGHT_DIR" ]; then
-  run_gate "playwright" "npx playwright test $PLAYWRIGHT_DIR --reporter=line" || OVERALL=1
+  run_gate "playwright" "npx playwright test $PLAYWRIGHT_DIR --reporter=line" "true" "true" || OVERALL=1
 else
   skip_gate "playwright" "$PLAYWRIGHT_DIR/ does not exist"
 fi
