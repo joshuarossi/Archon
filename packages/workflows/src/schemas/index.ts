@@ -94,6 +94,7 @@ export {
   workflowRunSchema,
   artifactTypeSchema,
   TERMINAL_WORKFLOW_STATUSES,
+  DELETABLE_WORKFLOW_STATUSES,
   RESUMABLE_WORKFLOW_STATUSES,
   isApprovalContext,
 } from './workflow-run';

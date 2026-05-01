@@ -1,0 +1,120 @@
+name: jira-router
+description: Route Jira webhook events into placeholder SDLC handlers.
+
+worktree:
+  enabled: false
+
+# Allow concurrent router runs. The router decodes a webhook payload and
+# dispatches background workflows; it does not mutate any checkout or
+# shared state, so two webhooks arriving in quick succession (e.g. when
+# task-done promotes three tickets at once) should both run, not have
+# the second one cancelled by the path-exclusive lock.
+mutates_checkout: false
+
+nodes:
+  - id: decode
+    bash: |
+      set -euo pipefail
+      bun -e '
+        const raw = process.argv[1];
+        if (!raw) {
+          throw new Error("Missing base64 payload in $ARGUMENTS");
+        }
+        const json = Buffer.from(raw, "base64").toString("utf8");
+        const obj = JSON.parse(json);
+        process.stdout.write(JSON.stringify(obj));
+      ' -- "$ARGUMENTS"
+  - id: route-epic-decompose
+    depends_on: [ decode ]
+    timeout: 900000
+    when: "$decode.output.event == 'transition' && $decode.output.issue_type ==
+      'Epic' && $decode.output.from_status == 'Backlog' &&
+      $decode.output.to_status == 'Selected for Development'"
+    bash: |
+      set -euo pipefail
+      target_cwd=$decode.output.codebase_cwd
+      if [ -z "$target_cwd" ] || [ "$target_cwd" = "null" ]; then
+        target_cwd="$PWD"
+      fi
+      encoded_payload="$(printf '%s' $decode.output | base64 -w0)"
+      mkdir -p "$ARTIFACTS_DIR/router-dispatch-logs"
+      dispatch_log="$ARTIFACTS_DIR/router-dispatch-logs/epic-decompose.log"
+      nohup archon workflow run epic-decompose \
+        --cwd "$target_cwd" \
+        --branch "epic-decompose-$WORKFLOW_ID" \
+        "$encoded_payload" \
+        >"$dispatch_log" 2>&1 < /dev/null &
+      printf '{"dispatched":"true","workflow":"epic-decompose","log":"%s","pid":"%s"}' "$dispatch_log" "$!"
+
+  - id: route-task-tests
+    depends_on: [ decode ]
+    timeout: 900000
+    when: "$decode.output.event == 'transition' && $decode.output.issue_type !=
+      'Epic' && $decode.output.from_status == 'Backlog' &&
+      $decode.output.to_status == 'Selected for Development'"
+    bash: |
+      # Dispatch task-tests workflow when a non-Epic ticket transitions into
+      # Selected for Development. The workflow generates failing tests and
+      # transitions the ticket to In Progress (which then fires task-implement).
+      set -euo pipefail
+      target_cwd=$decode.output.codebase_cwd
+      if [ -z "$target_cwd" ] || [ "$target_cwd" = "null" ]; then
+        target_cwd="$PWD"
+      fi
+      encoded_payload="$(printf '%s' $decode.output | base64 -w0)"
+      mkdir -p "$ARTIFACTS_DIR/router-dispatch-logs"
+      dispatch_log="$ARTIFACTS_DIR/router-dispatch-logs/task-tests.log"
+      issue_key=$decode.output.issue_key
+      nohup archon workflow run task-tests \
+        --cwd "$target_cwd" \
+        --branch "$issue_key" \
+        "$encoded_payload" \
+        >"$dispatch_log" 2>&1 < /dev/null &
+      printf '{"dispatched":"true","workflow":"task-tests","branch":"%s","log":"%s","pid":"%s"}' "$issue_key" "$dispatch_log" "$!"
+
+  - id: route-task-implement
+    depends_on: [ decode ]
+    timeout: 900000
+    when: "$decode.output.event == 'transition' && $decode.output.issue_type !=
+      'Epic' && $decode.output.from_status == 'Selected for Development' &&
+      $decode.output.to_status == 'In Progress'"
+    bash: |
+      # Dispatch task-implement when a non-Epic ticket transitions into In Progress.
+      # Uses --branch <issue-key> so the worktree attaches to the same branch
+      # task-tests pushed earlier. The dev loop iterates against that branch's
+      # tests, then docs + PR.
+      set -euo pipefail
+      target_cwd=$decode.output.codebase_cwd
+      if [ -z "$target_cwd" ] || [ "$target_cwd" = "null" ]; then
+        target_cwd="$PWD"
+      fi
+      issue_key=$decode.output.issue_key
+      encoded_payload="$(printf '%s' $decode.output | base64 -w0)"
+      mkdir -p "$ARTIFACTS_DIR/router-dispatch-logs"
+      dispatch_log="$ARTIFACTS_DIR/router-dispatch-logs/task-implement.log"
+      nohup archon workflow run task-implement \
+        --cwd "$target_cwd" \
+        --branch "$issue_key" \
+        "$encoded_payload" \
+        >"$dispatch_log" 2>&1 < /dev/null &
+      printf '{"dispatched":"true","workflow":"task-implement","branch":"%s","log":"%s","pid":"%s"}' "$issue_key" "$dispatch_log" "$!"
+
+  - id: route-task-done
+    depends_on: [ decode ]
+    timeout: 900000
+    when: "$decode.output.event == 'transition' && $decode.output.issue_type !=
+      'Epic' && $decode.output.to_status == 'Done'"
+    bash: |
+      # Dispatch task-done when a non-Epic ticket transitions to Done. The
+      # workflow removes this ticket's outward Blocks links, sweeps the
+      # project for unblocked tickets and promotes them to Selected for
+      # Development, and rolls up the parent Epic if all children are Done.
+      # Pure Jira API — no worktree needed.
+      set -euo pipefail
+      encoded_payload="$(printf '%s' $decode.output | base64 -w0)"
+      mkdir -p "$ARTIFACTS_DIR/router-dispatch-logs"
+      dispatch_log="$ARTIFACTS_DIR/router-dispatch-logs/task-done.log"
+      nohup archon workflow run task-done \
+        "$encoded_payload" \
+        >"$dispatch_log" 2>&1 < /dev/null &
+      printf '{"dispatched":"true","workflow":"task-done","log":"%s","pid":"%s"}' "$dispatch_log" "$!"

@@ -404,6 +404,23 @@ function mergeGlobalConfig(defaults: MergedConfig, global: GlobalConfig): Merged
     result.concurrency.maxConversations = global.concurrency.maxConversations;
   }
 
+  // Jira integration (global level) — adapter-level fields + project map
+  if (global.jira) {
+    const j: NonNullable<MergedConfig['jira']> = { ...(result.jira ?? {}) };
+    if (global.jira.base_url) j.base_url = global.jira.base_url;
+    if (global.jira.webhook_secret) j.webhook_secret = global.jira.webhook_secret;
+    if (global.jira.bot_account_id) j.bot_account_id = global.jira.bot_account_id;
+    if (global.jira.allowed_account_ids && global.jira.allowed_account_ids.length > 0) {
+      j.allowed_account_ids = [...global.jira.allowed_account_ids];
+    }
+    if (global.jira.projects && Object.keys(global.jira.projects).length > 0) {
+      j.projects = { ...global.jira.projects };
+    }
+    if (Object.keys(j).length > 0) {
+      result.jira = j;
+    }
+  }
+
   return result;
 }
 
@@ -468,6 +485,14 @@ function mergeRepoConfig(merged: MergedConfig, repo: RepoConfig): MergedConfig {
   // Propagate per-project env vars from repo config
   if (repo.env) {
     result.envVars = { ...result.envVars, ...repo.env };
+  }
+
+  // Jira project → codebase mapping (repo overrides global per key; adapter fields stay from global)
+  if (repo.jira?.projects && Object.keys(repo.jira.projects).length > 0) {
+    result.jira = {
+      ...(result.jira ?? {}),
+      projects: { ...(result.jira?.projects ?? {}), ...repo.jira.projects },
+    };
   }
 
   return result;

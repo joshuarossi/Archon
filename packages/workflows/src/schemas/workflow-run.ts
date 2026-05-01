@@ -18,8 +18,33 @@ export const workflowRunStatusSchema = z.enum([
 
 export type WorkflowRunStatus = z.infer<typeof workflowRunStatusSchema>;
 
-/** Statuses that indicate a run has finished and cannot transition further. */
+/**
+ * Statuses that indicate a run has finished and cannot transition further
+ * via abandon/cancel. Used by abandonWorkflow and the POST /abandon route
+ * to reject runs that have nothing left to terminate.
+ *
+ * `failed` is intentionally NOT here: `findResumableRun` matches failed
+ * runs by `(workflow_name, working_path)` and resumes them, so the system
+ * itself treats failed as recoverable. Listing failed as terminal would
+ * (and did) leave failed runs un-abandonable: the abandon path rejected
+ * them as "already terminal," and `findResumableRun` kept picking them up
+ * on the next dispatch — a contradictory pair of definitions that trapped
+ * failed runs in a re-resume loop. The abandon-terminal set is now exactly
+ * the statuses that prevent further transition: completed and cancelled.
+ */
 export const TERMINAL_WORKFLOW_STATUSES: readonly WorkflowRunStatus[] = [
+  'completed',
+  'cancelled',
+] as const;
+
+/**
+ * Statuses for which a run may be safely deleted. Broader than
+ * TERMINAL_WORKFLOW_STATUSES because failed runs are user-deletable
+ * directly — requiring an abandon-first step would be busywork. The
+ * exclusions (pending / running / paused) are the states where deletion
+ * would race with active execution or with a user about to resume.
+ */
+export const DELETABLE_WORKFLOW_STATUSES: readonly WorkflowRunStatus[] = [
   'completed',
   'failed',
   'cancelled',

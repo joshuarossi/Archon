@@ -51,6 +51,7 @@ import { BUNDLED_WORKFLOWS, BUNDLED_COMMANDS, isBinaryBuild } from '@archon/work
 import {
   RESUMABLE_WORKFLOW_STATUSES,
   TERMINAL_WORKFLOW_STATUSES,
+  DELETABLE_WORKFLOW_STATUSES,
 } from '@archon/workflows/schemas/workflow-run';
 import type { ApprovalContext, WorkflowRun } from '@archon/workflows/schemas/workflow-run';
 import { findMarkdownFilesRecursive } from '@archon/core/utils/commands';
@@ -2074,7 +2075,7 @@ export function registerApiRoutes(
       if (!run) {
         return apiError(c, 404, 'Workflow run not found');
       }
-      if (!TERMINAL_WORKFLOW_STATUSES.includes(run.status)) {
+      if (!DELETABLE_WORKFLOW_STATUSES.includes(run.status)) {
         return apiError(
           c,
           400,

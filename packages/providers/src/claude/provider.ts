@@ -295,11 +295,25 @@ export async function loadMcpConfig(
 
 // ─── SDK Hooks Building (absorbed from dag-executor) ───────────────────────
 
-/** YAML hook matcher shape (matches @archon/workflows/schemas/dag-node WorkflowNodeHooks) */
-interface YAMLHookMatcher {
+/** YAML static hook matcher (response only). */
+interface YAMLHookMatcherStatic {
   matcher?: string;
   response: unknown;
   timeout?: number;
+}
+
+/** YAML script hook matcher — `script` is an absolute file path after workflow resolution. */
+interface YAMLHookMatcherScript {
+  matcher?: string;
+  script: string;
+  runtime?: 'bun' | 'uv';
+  timeout?: number;
+}
+
+type YAMLHookMatcher = YAMLHookMatcherStatic | YAMLHookMatcherScript;
+
+function isScriptHookMatcher(m: YAMLHookMatcher): m is YAMLHookMatcherScript {
+  return 'script' in m && typeof m.script === 'string';
 }
 
 type SDKHooksMap = Partial<
@@ -317,21 +331,156 @@ type SDKHooksMap = Partial<
   >
 >;
 
+/** Context for spawning workflow hook scripts (stdin = hook JSON, stdout = SDK output). */
+export interface HookScriptBuildContext {
+  cwd: string;
+  mergedEnv: NodeJS.ProcessEnv;
+}
+
+function stringifyEnvForSpawn(env: NodeJS.ProcessEnv): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(env)) {
+    if (v !== undefined) out[k] = v;
+  }
+  return out;
+}
+
+function failClosedHookScriptOutput(event: string, detail: string): unknown {
+  if (event === 'PreToolUse') {
+    return {
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'deny',
+        permissionDecisionReason: `Workflow hook script failed: ${detail}`,
+      },
+    };
+  }
+  getLog().error({ event, detail }, 'claude.workflow_hook_script_failed');
+  return {
+    continue: false,
+    stopReason: `Workflow hook script failed (${event}): ${detail}`,
+  };
+}
+
+async function invokeWorkflowHookScript(
+  scriptPath: string,
+  runtime: 'bun' | 'uv',
+  stdinJson: string,
+  ctx: HookScriptBuildContext,
+  timeoutMs: number,
+  parentSignal: AbortSignal
+): Promise<{ ok: true; stdout: string } | { ok: false; error: string }> {
+  const controller = new AbortController();
+  const onParentAbort = (): void => {
+    controller.abort();
+  };
+  parentSignal.addEventListener('abort', onParentAbort, { once: true });
+  const timer = setTimeout(() => {
+    controller.abort();
+  }, timeoutMs);
+
+  const cmd = runtime === 'uv' ? 'uv' : 'bun';
+  const args = runtime === 'uv' ? ['run', scriptPath] : ['--no-env-file', 'run', scriptPath];
+
+  try {
+    const proc = Bun.spawn([cmd, ...args], {
+      cwd: ctx.cwd,
+      stdin: new TextEncoder().encode(stdinJson),
+      stdout: 'pipe',
+      stderr: 'pipe',
+      env: stringifyEnvForSpawn(ctx.mergedEnv),
+      signal: controller.signal,
+    });
+    const exitCode = await proc.exited;
+    const stdoutBuf = await new Response(proc.stdout).text();
+    const stderrBuf = await new Response(proc.stderr).text();
+    if (exitCode !== 0) {
+      const tail = stderrBuf.trim() ? ` — ${stderrBuf.trim().slice(0, 400)}` : '';
+      return { ok: false, error: `exit ${exitCode}${tail}` };
+    }
+    return { ok: true, stdout: stdoutBuf };
+  } catch (e) {
+    const err = e as Error;
+    return { ok: false, error: err.message };
+  } finally {
+    clearTimeout(timer);
+    parentSignal.removeEventListener('abort', onParentAbort);
+  }
+}
+
 /**
  * Convert declarative YAML hook definitions to SDK HookCallbackMatcher arrays.
+ * Script matchers spawn `bun` or `uv` with stdin = JSON-serialized hook input.
  */
-export function buildSDKHooksFromYAML(
-  nodeHooks: Record<string, YAMLHookMatcher[] | undefined>
-): SDKHooksMap {
+export async function buildSDKHooksFromYAML(
+  nodeHooks: Record<string, YAMLHookMatcher[] | undefined>,
+  ctx: HookScriptBuildContext
+): Promise<SDKHooksMap> {
   const sdkHooks: SDKHooksMap = {};
 
   for (const [event, matchers] of Object.entries(nodeHooks)) {
     if (!matchers) continue;
-    sdkHooks[event] = matchers.map(m => ({
-      ...(m.matcher ? { matcher: m.matcher } : {}),
-      hooks: [async (): Promise<unknown> => m.response],
-      ...(m.timeout ? { timeout: m.timeout } : {}),
-    }));
+    sdkHooks[event] = await Promise.all(
+      matchers.map(async m => {
+        if (isScriptHookMatcher(m)) {
+          const timeoutSec = m.timeout ?? 60;
+          const timeoutMs = timeoutSec * 1000;
+          const rt: 'bun' | 'uv' = m.runtime ?? 'bun';
+          return {
+            ...(m.matcher ? { matcher: m.matcher } : {}),
+            hooks: [
+              async (
+                input: unknown,
+                _toolUseID: string | undefined,
+                options: { signal: AbortSignal }
+              ): Promise<unknown> => {
+                let stdinJson: string;
+                try {
+                  stdinJson = JSON.stringify(input ?? {});
+                } catch (e) {
+                  getLog().error({ err: e, event }, 'claude.workflow_hook_input_serialize_failed');
+                  return failClosedHookScriptOutput(
+                    event,
+                    'could not serialize hook input to JSON'
+                  );
+                }
+                const result = await invokeWorkflowHookScript(
+                  m.script,
+                  rt,
+                  stdinJson,
+                  ctx,
+                  timeoutMs,
+                  options.signal
+                );
+                if (!result.ok) {
+                  return failClosedHookScriptOutput(event, result.error);
+                }
+                const trimmed = result.stdout.trim();
+                if (trimmed.length === 0) {
+                  return undefined;
+                }
+                try {
+                  return JSON.parse(trimmed) as unknown;
+                } catch (e) {
+                  getLog().error(
+                    { err: e, event, stdoutPreview: trimmed.slice(0, 200) },
+                    'claude.workflow_hook_stdout_parse_failed'
+                  );
+                  return failClosedHookScriptOutput(event, 'hook stdout is not valid JSON');
+                }
+              },
+            ],
+            ...(m.timeout ? { timeout: m.timeout } : {}),
+          };
+        }
+        const sm = m;
+        return {
+          ...(sm.matcher ? { matcher: sm.matcher } : {}),
+          hooks: [async (): Promise<unknown> => sm.response],
+          ...(sm.timeout ? { timeout: sm.timeout } : {}),
+        };
+      })
+    );
   }
 
   if (Object.keys(sdkHooks).length === 0) {
@@ -365,7 +514,8 @@ interface ProviderWarning {
 async function applyNodeConfig(
   options: Options,
   nodeConfig: NodeConfig,
-  cwd: string
+  cwd: string,
+  mergedEnv: NodeJS.ProcessEnv
 ): Promise<ProviderWarning[]> {
   const warnings: ProviderWarning[] = [];
   // allowed_tools → tools
@@ -380,8 +530,9 @@ async function applyNodeConfig(
 
   // hooks → build SDK hooks
   if (nodeConfig.hooks) {
-    const builtHooks = buildSDKHooksFromYAML(
-      nodeConfig.hooks as Record<string, YAMLHookMatcher[] | undefined>
+    const builtHooks = await buildSDKHooksFromYAML(
+      nodeConfig.hooks as Record<string, YAMLHookMatcher[] | undefined>,
+      { cwd, mergedEnv }
     );
     if (Object.keys(builtHooks).length > 0) {
       // Merge with existing hooks (PostToolUse capture hook)
@@ -947,7 +1098,7 @@ export class ClaudeProvider implements IAgentProvider {
     let nodeConfigWarnings: ProviderWarning[] = [];
     if (requestOptions?.nodeConfig) {
       const tempOptions: Options = {} as Options;
-      nodeConfigWarnings = await applyNodeConfig(tempOptions, requestOptions.nodeConfig, cwd);
+      nodeConfigWarnings = await applyNodeConfig(tempOptions, requestOptions.nodeConfig, cwd, env);
     }
 
     // Yield provider warnings once before retries
@@ -989,7 +1140,7 @@ export class ClaudeProvider implements IAgentProvider {
 
       // 2. Apply nodeConfig translation (re-applied per attempt since options are fresh)
       if (requestOptions?.nodeConfig) {
-        await applyNodeConfig(options, requestOptions.nodeConfig, cwd);
+        await applyNodeConfig(options, requestOptions.nodeConfig, cwd, env);
       }
 
       // 3. Set session resume

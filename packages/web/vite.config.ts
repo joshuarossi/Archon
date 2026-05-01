@@ -45,10 +45,12 @@ export default defineConfig(({ mode }) => {
       ],
     },
     server: {
+      allowedHosts: ['archon.ai.alphaservices.cc'],
+      host: '0.0.0.0',
       port: 5173,
       proxy: {
         '/api': {
-          target: `http://localhost:${apiPort}`,
+          target: `https://archon-server.ai.alphaservices.cc`,
           changeOrigin: true,
         },
       },

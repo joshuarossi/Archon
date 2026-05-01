@@ -429,6 +429,7 @@ import type { DagNode, WorkflowDefinition } from '@/lib/api';
 - **Slack** (`packages/adapters/src/chat/slack/`): SDK with polling (not webhooks), conversation ID = `thread_ts`
 - **Telegram** (`packages/adapters/src/chat/telegram/`): Bot API with polling, conversation ID = `chat_id`
 - **GitHub** (`packages/adapters/src/forge/github/`): Webhooks + GitHub CLI, conversation ID = `owner/repo#number`
+- **Jira** (`packages/adapters/src/community/forge/jira/`): Webhooks ⇒ synthesized `/workflow run jira-router <json>` slash command (no AI router). Routing logic lives in user-authored `jira-router.yaml`; the adapter has zero knowledge of which downstream workflow should run. Conversation ID = `issueKey` (e.g., `PROJ-123`)
 - **Discord** (`packages/adapters/src/community/chat/discord/`): discord.js WebSocket, conversation ID = channel ID
 
 **Adapter Authorization Pattern:**

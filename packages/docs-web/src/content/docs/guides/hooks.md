@@ -33,18 +33,37 @@ nodes:
               permissionDecisionReason: "No shell access during SQL generation"
 ```
 
+### Script hook (dynamic)
+
+```yaml
+hooks:
+  PreToolUse:
+    - script: my-guard        # named: .archon/scripts/my-guard.ts (or path/inline)
+      runtime: bun
+      timeout: 30
+```
+
 ## How It Works
 
-Each hook matcher has three fields:
-- `matcher` (optional): Regex pattern to filter by tool name. Omit to match all tools.
-- `response` (required): The SDK `SyncHookJSONOutput` returned when the hook fires.
-- `timeout` (optional): Seconds before the hook times out (default: 60).
+Each hook matcher uses **exactly one** of:
 
-At runtime, each YAML hook is wrapped in a trivial callback:
-```
-async () => response
-```
-No custom DSL — `response` IS the SDK type, passed through unchanged.
+- **`response`** (static): The SDK `SyncHookJSONOutput` object returned every time the hook fires. Wrapped as `async () => response`.
+- **`script`** (dynamic): A Bun or uv subprocess that receives the **JSON-serialized hook input** on stdin (same shape the Claude Agent SDK passes to hooks: `tool_name`, `tool_input`, `cwd`, etc.). It must print **one JSON object** on stdout — parsed as `SyncHookJSONOutput`. **Empty stdout** (after trim) means “no override / allow normal flow.”
+
+Shared optional fields:
+
+- `matcher` (optional): Regex pattern to filter by tool name. Omit to match all tools.
+- `timeout` (optional): Seconds before the hook subprocess is killed (default: 60).
+
+**Script resolution** (same conventions as [script nodes](/guides/script-nodes/)):
+
+- **Named** script key → discovered under `<cwd>/.archon/scripts/` then `~/.archon/scripts/` (repo wins on name collision).
+- **Filesystem path** (absolute, or relative to the workflow `cwd`) → run that file directly.
+- **Inline** source (detected the same way as script nodes: newlines or shell-like characters in the string) → written to a temp file before execution.
+
+`runtime:` is optional for script hooks (`bun` default, or `uv` for Python). For named scripts, the file extension determines runtime when omitted.
+
+**Security**: Script hooks execute arbitrary code with the same trust model as `script:` nodes — only use workflows and scripts from sources you trust.
 
 **Important**: When using `hookSpecificOutput`, you must include a `hookEventName`
 field that matches the event key (e.g., `hookEventName: PreToolUse` inside a
@@ -304,8 +323,7 @@ need context injection, input modification, or post-tool-use reactions.
 
 ## Limitations
 
-- **Static responses only in YAML** — hooks return the same response every time.
-  For conditional logic, use `when:` conditions on downstream nodes or gate execution with upstream bash nodes that emit structured output.
+- **Script hook failures** — spawn errors, non-zero exit, invalid JSON stdout, or timeouts fail closed (PreToolUse → deny; other events → agent stop with reason).
 - **Claude only** — Codex nodes warn and ignore hooks.
 - **No hook event streaming** — hook lifecycle events (`hook_started`, `hook_progress`)
   are not forwarded to the Web UI.

@@ -1,0 +1,663 @@
+name: task-implement
+description: Implement a Jira task — write code that satisfies the acceptance criteria. After each iteration, deterministic validation runs; on green, generate docs and open a PR.
+
+worktree:
+  enabled: true
+
+nodes:
+  - id: decode
+    bash: |
+      # Decode the base64 webhook payload; capture workflow start time for end-of-run worklog.
+      set -euo pipefail
+      mkdir -p "$ARTIFACTS_DIR"
+      date +%s%3N > "$ARTIFACTS_DIR/.workflow-start-ms"
+      bun -e '
+        const raw = process.argv[1];
+        if (!raw) {
+          throw new Error("Missing JSON payload input");
+        }
+        let obj;
+        try {
+          const decoded = Buffer.from(raw, "base64").toString("utf8");
+          obj = JSON.parse(decoded);
+        } catch {
+          obj = JSON.parse(raw);
+        }
+        process.stdout.write(JSON.stringify(obj));
+      ' -- "$ARGUMENTS"
+
+  - id: write-trigger-artifact
+    depends_on: [ decode ]
+    bash: |
+      # Persist the decoded webhook payload as $ARTIFACTS_DIR/trigger-payload.json.
+      set -euo pipefail
+      mkdir -p "$ARTIFACTS_DIR"
+      out="$ARTIFACTS_DIR/trigger-payload.json"
+      printf '%s' $decode.output | bun -e '
+        import { writeFileSync, readFileSync } from "node:fs";
+        const obj = JSON.parse(readFileSync(0, "utf8"));
+        writeFileSync(process.argv[1], JSON.stringify(obj, null, 2));
+      ' -- "$out"
+      printf '\n{"trigger_payload":"%s"}' "$out"
+
+  - id: fetch-task-context
+    depends_on: [ write-trigger-artifact ]
+    bash: |
+      # Fetch the task from Jira and write task-context.md, parent-epic-key.txt, task.raw.json.
+      set -euo pipefail
+      export ARTIFACTS_DIR="$ARTIFACTS_DIR"
+      bun /home/user/Archon/.archon/scripts/jira-fetch-task-context.ts
+
+  - id: fetch-epic-tech-context
+    depends_on: [ fetch-task-context ]
+    bash: |
+      # Fetch parent Epic's attachments (TechSpec, DesignDoc, etc.) so the dev agent has full context.
+      set -euo pipefail
+      export ARTIFACTS_DIR="$ARTIFACTS_DIR"
+      parent_key="$(cat "$ARTIFACTS_DIR/parent-epic-key.txt" 2>/dev/null || echo "")"
+      if [ -z "$parent_key" ]; then
+        echo "No parent Epic key — skipping tech context fetch."
+        printf '\n{"skipped":"true"}'
+        exit 0
+      fi
+      echo "Fetching parent Epic $parent_key..."
+      mkdir -p "$ARTIFACTS_DIR/parent-epic"
+      printf '{"event":"transition","issue_key":"%s","project":"%s"}\n' \
+        "$parent_key" "$decode.output.project" > "$ARTIFACTS_DIR/parent-epic/trigger-payload.json"
+      ARTIFACTS_DIR="$ARTIFACTS_DIR/parent-epic" bun /home/user/Archon/.archon/scripts/jira-fetch-epic.ts > /dev/null
+      ARTIFACTS_DIR="$ARTIFACTS_DIR/parent-epic" bun /home/user/Archon/.archon/scripts/jira-fetch-attachments.ts > /dev/null
+      cp "$ARTIFACTS_DIR/parent-epic/epic-context.md" "$ARTIFACTS_DIR/parent-epic-context.md"
+      cp "$ARTIFACTS_DIR/parent-epic/attachments.md" "$ARTIFACTS_DIR/parent-attachments.md"
+      printf '\n{"parent_context":"%s","parent_attachments":"%s"}' \
+        "$ARTIFACTS_DIR/parent-epic-context.md" "$ARTIFACTS_DIR/parent-attachments.md"
+
+  # ─── Rebase the branch onto current origin/main BEFORE the dev runs ──
+  # The test-gen workflow already pushed tests to this branch off whatever
+  # main was when it ran. Sibling tickets may have merged in the meantime;
+  # if we don't rebase first, validate-1 fails on tests/lint/typecheck
+  # against THOSE sibling tickets' files (stale-base illusion), the chain
+  # cascades to skips, and we never reach the open-pr node. Rebasing first
+  # also means the dev agent sees the actual current state of the codebase
+  # rather than a snapshot from minutes/hours ago.
+  - id: preflight-clean-worktree
+    depends_on: [ fetch-epic-tech-context ]
+    bash: |
+      # Rebase must run on a clean branch. Retries/resumes can leave local
+      # modifications from a previously aborted dev attempt in the same ticket
+      # worktree. Normalize the checkout deterministically before rebase.
+      set -euo pipefail
+      changed="$(git status --porcelain || true)"
+      if [ -n "$changed" ]; then
+        echo "Pre-rebase sanitation: worktree dirty, normalizing to HEAD." >&2
+        printf '%s\n' "$changed" >&2
+
+        # Tracked files: discard staged + unstaged changes.
+        git reset --hard HEAD >/dev/null
+
+        # Untracked files: remove explicitly (never use git clean -fd).
+        # This is safe in per-ticket isolated worktrees and avoids carrying
+        # stale scratch files between retries.
+        while IFS= read -r rel; do
+          [ -n "$rel" ] || continue
+          rm -rf -- "$rel"
+        done < <(git ls-files --others --exclude-standard)
+      fi
+      printf '{"clean":"true","sanitized":"%s"}' "$( [ -n "$changed" ] && echo true || echo false )"
+
+  - id: rebase-on-main
+    depends_on: [ preflight-clean-worktree ]
+    bash: |
+      set -euo pipefail
+      git fetch origin main --quiet
+      if ! git rebase origin/main; then
+        echo "Rebase onto origin/main produced conflicts. Aborting; surface to human." >&2
+        git rebase --abort || true
+        exit 1
+      fi
+      git push --force-with-lease origin HEAD --quiet
+      printf '{"rebased":"true","onto":"%s"}' "$(git rev-parse origin/main | cut -c1-12)"
+
+  # ─── Dev attempt 1 + validation gate 1 ─────────────────────────────────
+  # Test boundaries: PreToolUse hook only (paths + selective Bash). Validate nodes run the full gate.
+  - id: dev-attempt-1
+    depends_on: [ rebase-on-main ]
+    context: fresh
+    # Same absolute path convention as bash nodes in this workflow (Archon checkout).
+    hooks:
+      PreToolUse:
+        - script: /home/user/Archon/.archon/scripts/archie-pretooluse-no-tests.ts
+          timeout: 30
+    prompt: |
+      Your task is to write code that satisfies every acceptance criterion
+      in `$ARTIFACTS_DIR/task-context.md`. The acceptance criteria are
+      the standard for "done."
+
+      Inputs:
+      - `$ARTIFACTS_DIR/task-context.md` — the task summary, description,
+        and acceptance criteria. This is the spec.
+      - `$ARTIFACTS_DIR/parent-attachments.md` — the project's tech stack
+        and conventions (TechSpec, DesignDoc, STYLE_GUIDE, etc.).
+      - The current branch checkout (cwd is the codebase).
+
+      RULES (no ambiguity, no exceptions):
+      - DO NOT READ TESTS. Never open files under `tests/`, `test/`,
+        `e2e/`, `__tests__/`, or matching `*.test.*` / `*.spec.*`.
+      - DO NOT WRITE OR EDIT TESTS. Never create or modify test files,
+        test fixtures, or test configs (vitest.config, playwright.config,
+        jest.config).
+      - DO NOT RUN TESTS. Never invoke `npm test`, `npm run test*`,
+        `vitest`, `playwright`, `jest`, or any test runner — by any path
+        (`npx`, `node ./node_modules/.bin/...`, anything).
+      - AUTOMATIC FAILURE CONDITION: if you create, modify, or delete any
+        file under `tests/`, `test/`, `e2e/`, `__tests__/`, any
+        `*.test.*` / `*.spec.*` file, or `vitest.config.*` /
+        `playwright.config.*` / `jest.config.*`, this attempt is invalid.
+        Do not touch those files.
+      - DO NOT ASK. Never ask "how should I…" or "should I run tests" —
+        you have one job, do it.
+      - WRITE CODE that satisfies the acceptance criteria, then COMMIT,
+        then FINISH. That is the entire workflow.
+
+      The ticket tells you what to write. task-context.md and
+      parent-attachments.md are the contract. If the ticket is ambiguous,
+      name the ambiguity in your commit message and pick the most direct
+      interpretation.
+
+      Output: commits on the current branch whose code, taken together,
+      satisfies every acceptance criterion. Commit when done.
+
+  - id: validate-1
+    depends_on: [ dev-attempt-1 ]
+    bash: |
+      # Deterministic quality gate: lint, typecheck, scoped vitest, scoped playwright.
+      # Always exits 0; the JSON output's `passed` field drives the retry decision.
+      # The script reads ISSUE_KEY from $ARTIFACTS_DIR/trigger-payload.json
+      # and auto-detects the attempt number from existing feedback artifacts.
+      set -euo pipefail
+      bash /home/user/Archon/.archon/scripts/task-run-validation.sh
+
+  # ─── Dev attempt 2 + validation gate 2 (only if attempt 1 failed validation) ──
+  # Same PreToolUse hook as dev-attempt-1. Reads feedback.json from validate-1.
+  - id: dev-attempt-2
+    depends_on: [ validate-1 ]
+    when: "$validate-1.output.passed == 'false'"
+    context: fresh
+    hooks:
+      PreToolUse:
+        - script: /home/user/Archon/.archon/scripts/archie-pretooluse-no-tests.ts
+          timeout: 30
+    prompt: |
+      Your task is to write code that satisfies every acceptance criterion
+      in `$ARTIFACTS_DIR/task-context.md`, AND fix the failures listed in
+      `$ARTIFACTS_DIR/feedback.json`.
+
+      Inputs:
+      - `$ARTIFACTS_DIR/task-context.md` — the task summary, description,
+        and acceptance criteria. This is the spec.
+      - `$ARTIFACTS_DIR/parent-attachments.md` — the project's tech stack
+        and conventions.
+      - `$ARTIFACTS_DIR/feedback.json` — a list of failures observed
+        against the current branch (lint, typecheck, vitest, playwright)
+        with logs. Each entry that says "failed" is a thing for you to
+        fix. The acceptance criteria remain the standard for "done"; the
+        failures here are concrete pointers to where the code is not yet
+        meeting the ACs.
+      - The current branch checkout (cwd is the codebase).
+
+      RULES (no ambiguity, no exceptions):
+      - DO NOT READ TESTS. Never open files under `tests/`, `test/`,
+        `e2e/`, `__tests__/`, or matching `*.test.*` / `*.spec.*`.
+      - DO NOT WRITE OR EDIT TESTS. Never create or modify test files,
+        test fixtures, or test configs (vitest.config, playwright.config,
+        jest.config).
+      - DO NOT RUN TESTS. Never invoke `npm test`, `npm run test*`,
+        `vitest`, `playwright`, `jest`, or any test runner — by any path
+        (`npx`, `node ./node_modules/.bin/...`, anything).
+      - AUTOMATIC FAILURE CONDITION: if you create, modify, or delete any
+        file under `tests/`, `test/`, `e2e/`, `__tests__/`, any
+        `*.test.*` / `*.spec.*` file, or `vitest.config.*` /
+        `playwright.config.*` / `jest.config.*`, this attempt is invalid.
+        Do not touch those files.
+      - DO NOT ASK. Never ask "how should I…" or "should I run tests" —
+        you have one job, do it.
+      - WRITE CODE that satisfies the acceptance criteria and addresses
+        every failure in feedback.json, then COMMIT, then FINISH. That
+        is the entire workflow.
+
+      The ticket tells you what to write. task-context.md and
+      parent-attachments.md are the contract.
+
+      Output: commits on the current branch whose code, taken together,
+      satisfies every acceptance criterion AND closes every failure in
+      feedback.json. Commit when done.
+
+  - id: validate-2
+    depends_on: [ dev-attempt-2 ]
+    when: "$validate-1.output.passed == 'false'"
+    bash: |
+      set -euo pipefail
+      bash /home/user/Archon/.archon/scripts/task-run-validation.sh
+
+  # ─── Last-resort iterative dev loop (only fires when both validates failed) ──
+  # Two explicit retries with the cage didn't converge. Drop into a loop node
+  # that re-invokes the dev agent up to 5 more times, with task-run-validation.sh
+  # as the until_bash terminator. Loop exits as soon as validation passes (exit 0)
+  # or hits max_iterations (state: failed → downstream skips through to
+  # generate-docs's ANY-passed `when:` clause, which leaves the ticket without a
+  # PR; future improvement: surface to a human at that point).
+  #
+  # CAGE LIMITATION: Archon's loop nodes strip LOOP_NODE_AI_FIELDS, so
+  # `denied_tools` and `hooks` defined here would be silently dropped. We
+  # accept that — by the time we're here, two cage-enforced attempts already
+  # failed; the loop's job is converging on something that passes the gates.
+  # The prompt's imperative rules are the only enforcement.
+  - id: dev-attempt-loop
+    depends_on: [ validate-2 ]
+    when: "$validate-2.output.passed == 'false'"
+    context: fresh
+    loop:
+      max_iterations: 5
+      # Two ways to exit the loop, either is sufficient (Archon's loop
+      # uses OR semantics: completionDetected = signalDetected || bashComplete):
+      #   1. The agent emits <COMPLETE>...</COMPLETE> on its last line
+      #      (this is how it says "I'm done writing code for this iteration").
+      #   2. The until_bash script runs validation and exits 0.
+      #
+      # Either trigger ends the loop. A premature COMPLETE (agent says done
+      # but validation actually still fails) is caught downstream: the
+      # validate-loop node re-runs validation, emits passed=false, and
+      # generate-docs's `when:` clause skips the rest of the chain — no
+      # broken code gets shipped. If max_iterations is hit with neither
+      # path triggering, the loop ends in state: failed and the chain also
+      # cleanly exits via cascading skips.
+      until: COMPLETE
+      until_bash: |
+        set -uo pipefail
+        bash /home/user/Archon/.archon/scripts/task-run-validation.sh > /dev/null 2>&1
+        passed=$(jq -r '.overall // "failed"' "$ARTIFACTS_DIR/feedback.json" 2>/dev/null || echo failed)
+        if [ "$passed" = "passed" ]; then
+          exit 0
+        fi
+        exit 1
+      prompt: |
+        Your task is to write code that satisfies every acceptance criterion
+        in `$ARTIFACTS_DIR/task-context.md`, AND fix every failure listed in
+        `$ARTIFACTS_DIR/feedback.json`.
+
+        Inputs:
+        - `$ARTIFACTS_DIR/task-context.md` — the task summary, description,
+          and acceptance criteria. This is the spec.
+        - `$ARTIFACTS_DIR/parent-attachments.md` — the project's tech stack
+          and conventions.
+        - `$ARTIFACTS_DIR/feedback.json` — quality-gate results from the
+          most recent validation pass. Each entry that says "failed" is a
+          thing for you to fix. After your iteration, validation runs again
+          and feedback.json is rewritten — read it fresh each iteration.
+        - The current branch checkout (cwd is the codebase).
+
+        RULES (no ambiguity, no exceptions):
+        - DO NOT READ TESTS. Never open files under `tests/`, `test/`,
+          `e2e/`, `__tests__/`, or matching `*.test.*` / `*.spec.*`.
+        - DO NOT WRITE OR EDIT TESTS. Never create or modify test files,
+          test fixtures, or test configs (vitest.config, playwright.config,
+          jest.config).
+        - DO NOT RUN TESTS. Never invoke `npm test`, `npm run test*`,
+          `vitest`, `playwright`, `jest`, or any test runner — by any path.
+        - AUTOMATIC FAILURE CONDITION: if you create, modify, or delete any
+          file under `tests/`, `test/`, `e2e/`, `__tests__/`, any
+          `*.test.*` / `*.spec.*` file, or `vitest.config.*` /
+          `playwright.config.*` / `jest.config.*`, this iteration is invalid.
+          Do not touch those files.
+        - DO NOT ASK. You have one job, do it.
+        - WRITE CODE that addresses each "failed" entry in feedback.json
+          and satisfies the acceptance criteria, then COMMIT.
+
+        When you have committed and believe your work for this iteration
+        is complete, emit `<COMPLETE>done</COMPLETE>` on its own line as
+        the very last thing in your response. The pipeline will then run
+        validation; if it still fails, you will be re-invoked with fresh
+        feedback.json. If you have NOT yet finished writing/committing,
+        do not emit COMPLETE — the loop will iterate again.
+
+  # ─── Materialize a final feedback.json after the loop converges ──
+  # The loop's until_bash ran validation many times, but the LAST validation
+  # the loop performed only updated feedback.json once. This node re-runs the
+  # validation one more time and emits its standard JSON output so generate-docs
+  # and downstream gates have a node to reference (`$validate-loop.output.passed`).
+  - id: validate-loop
+    depends_on: [ dev-attempt-loop ]
+    bash: |
+      set -euo pipefail
+      bash /home/user/Archon/.archon/scripts/task-run-validation.sh
+
+  - id: generate-docs
+    depends_on: [ validate-1, validate-2, validate-loop ]
+    trigger_rule: all_done
+    when: "$validate-1.output.passed == 'true' || $validate-2.output.passed
+      == 'true' || $validate-loop.output.passed == 'true'"
+    context: fresh
+    prompt: |
+      Your task is to update user-facing documentation to reflect the changes
+      on this branch.
+
+      Inputs:
+      - `git diff origin/main` — the source changes that need to be
+        documented.
+      - `$ARTIFACTS_DIR/task-context.md` — the task summary, description, and
+        acceptance criteria. Use it to understand the user-visible intent of
+        the changes (not just what files moved).
+      - `$decode.output.issue_key` — the Jira key to reference in the
+        CHANGELOG entry.
+
+      Output:
+      - Always create `.changelog/<issue-key>.md` (lowercase issue key,
+        e.g. `.changelog/wor-42.md`). Each ticket gets its own fragment
+        file — never edit the project's `CHANGELOG.md` directly. A
+        release-time script concatenates fragments at version-bump time;
+        per-ticket fragments avoid the merge conflicts that would
+        otherwise hit every parallel branch trying to add an entry to
+        the same shared file.
+        Format: a short markdown block with a heading line referencing
+        the issue key and a 1–3 sentence description of what shipped
+        for users.
+      - Update `README.md` only if the changes affect how a user/developer
+        sets up or uses the project (new commands, env vars, dependencies,
+        setup steps).
+      - Update or add entries under `docs/**/*.md` for any
+        feature/setting/concept the diff introduces.
+
+      Constraint: write only `.changelog/<issue-key>.md`, `README.md`,
+      and `docs/**/*.md`. Do not edit `CHANGELOG.md`. Do not touch
+      source, tests, or package files.
+
+      Commit only the docs files you touched.
+
+  - id: open-pr
+    depends_on: [ generate-docs ]
+    bash: |
+      # Push the branch and open a GitHub PR. Posts the PR URL as a Jira comment.
+      set -euo pipefail
+      export ARTIFACTS_DIR="$ARTIFACTS_DIR"
+      bun /home/user/Archon/.archon/scripts/task-open-pr.ts
+
+  - id: verify-pr-ready
+    depends_on: [ open-pr ]
+    trigger_rule: all_done
+    bash: |
+      # Guard downstream review/synthesis/merge chain. If open-pr never ran,
+      # stop the rest of the DAG from fabricating review output.
+      set -euo pipefail
+      if [ ! -f "$ARTIFACTS_DIR/pr-info.json" ]; then
+        printf '{"ready":"false","reason":"missing_pr_info"}'
+        exit 0
+      fi
+      pr_number="$(jq -r '.pr_number // ""' "$ARTIFACTS_DIR/pr-info.json" 2>/dev/null || echo "")"
+      if [ -z "$pr_number" ]; then
+        printf '{"ready":"false","reason":"missing_pr_number"}'
+        exit 0
+      fi
+      printf '{"ready":"true","pr_number":"%s"}' "$pr_number"
+
+  # ─── Review setup: write the artifacts the existing reviewer commands expect ──
+  # archon-code-review-agent etc. read $ARTIFACTS_DIR/.pr-number and
+  # $ARTIFACTS_DIR/review/scope.md. We have pr-info.json + task-context.md;
+  # this bridge converts.
+  #
+  # Note: rebase-on-main now runs BEFORE dev-attempt-1, not here. The branch
+  # is already on current main by the time reviewers see it.
+  - id: setup-review-context
+    depends_on: [ verify-pr-ready ]
+    when: "$verify-pr-ready.output.ready == 'true'"
+    bash: |
+      set -euo pipefail
+      mkdir -p "$ARTIFACTS_DIR/review"
+      jq -r .pr_number "$ARTIFACTS_DIR/pr-info.json" > "$ARTIFACTS_DIR/.pr-number"
+      cat > "$ARTIFACTS_DIR/review/scope.md" <<EOF
+      # Review Scope
+
+      **Ticket**: $decode.output.issue_key
+      **PR**: #$(cat "$ARTIFACTS_DIR/.pr-number")
+      **Branch**: $(git rev-parse --abbrev-ref HEAD)
+
+      ## Changed Files
+
+      $(git diff origin/main --name-only | sed 's/^/- /')
+
+      ## Task Context
+
+      $(cat "$ARTIFACTS_DIR/task-context.md")
+      EOF
+      printf '\n{"pr_number":"%s","scope_path":"%s"}' \
+        "$(cat "$ARTIFACTS_DIR/.pr-number")" \
+        "$ARTIFACTS_DIR/review/scope.md"
+
+  # ─── Reviewers fan out in parallel ───────────────────────────────────
+  # Four use the existing Archon reviewer commands; one (scope) is custom
+  # because the existing archon-pr-review-scope depends on artifacts from
+  # the plan-to-pr chain that we don't produce.
+
+  - id: review-scope
+    depends_on: [ setup-review-context ]
+    context: fresh
+    output_format:
+      type: object
+      properties:
+        verdict: { type: string, enum: [APPROVE, REQUEST_CHANGES, NEEDS_DISCUSSION] }
+        critical_count: { type: integer }
+        high_count: { type: integer }
+        medium_count: { type: integer }
+        low_count: { type: integer }
+      required: [verdict, critical_count, high_count, medium_count, low_count]
+    prompt: |
+      You are the SCOPE reviewer. Read `$ARTIFACTS_DIR/review/scope.md` and
+      look at the PR diff with `git diff origin/main`.
+
+      Evaluate whether the work stayed within scope:
+      - **Files in scope**: for each changed file, is it relevant to what the
+        ticket asked for? Flag unrelated touches and drive-by edits — when
+        someone asked to update a modal, we should not be changing an auth
+        route.
+      - **AC coverage**: does the diff address each acceptance criterion?
+        Flag unimplemented or partial ACs. Flag work that goes BEYOND the
+        ACs — extra features the ticket didn't ask for.
+
+      You are NOT judging code quality, security, error handling, or
+      documentation — other reviewers cover those.
+
+      Write `$ARTIFACTS_DIR/review/scope-findings.md` following the same
+      format the other reviewers use:
+
+      ```markdown
+      # Scope Review Findings: PR #{number}
+
+      **Reviewer**: scope-review
+      **Date**: {ISO timestamp}
+      **Files Reviewed**: {count}
+
+      ## Summary
+      {2-3 sentence overview}
+      **Verdict**: APPROVE | REQUEST_CHANGES | NEEDS_DISCUSSION
+
+      ## Findings
+
+      ### Finding 1: {Descriptive Title}
+      **Severity**: CRITICAL | HIGH | MEDIUM | LOW
+      **Category**: scope-creep | unrelated-change | missing-ac | ac-overreach
+      **Location**: `{file}:{line}` (or `(plan-level)` for AC concerns)
+      **Issue**: {description}
+      **Evidence**: `{file path or snippet}`
+      **Why This Matters**: {impact}
+
+      ## Statistics
+      Total findings: {n}
+      - CRITICAL: {n}
+      - HIGH: {n}
+      - MEDIUM: {n}
+      - LOW: {n}
+      ```
+
+      Severity guidance:
+      - CRITICAL: a critical AC is unimplemented, or files were touched that
+        risk breaking unrelated systems.
+      - HIGH: an AC is partial, or scope creep is large enough to warrant
+        a separate ticket.
+      - MEDIUM: small unrelated change snuck in, or AC met loosely.
+      - LOW: minor commentary, no real action needed.
+
+      After writing, post to PR:
+        gh pr comment "$(cat $ARTIFACTS_DIR/.pr-number)" \
+          --body-file "$ARTIFACTS_DIR/review/scope-findings.md"
+
+      Return STRICT JSON only:
+        {"verdict":"...","critical_count":N,"high_count":N,"medium_count":N,"low_count":N}
+
+  - id: review-code
+    command: archon-code-review-agent
+    depends_on: [ setup-review-context ]
+    context: fresh
+
+  - id: review-error-handling
+    command: archon-error-handling-agent
+    depends_on: [ setup-review-context ]
+    context: fresh
+
+  - id: review-docs
+    command: archon-docs-impact-agent
+    depends_on: [ setup-review-context ]
+    context: fresh
+
+  - id: review-comment-quality
+    command: archon-comment-quality-agent
+    depends_on: [ setup-review-context ]
+    context: fresh
+
+  - id: verify-reviewer-artifacts
+    depends_on: [ review-scope, review-code, review-error-handling, review-docs, review-comment-quality ]
+    trigger_rule: all_done
+    bash: |
+      # Synthesize must not run unless at least one reviewer artifact exists.
+      set -euo pipefail
+      count="$(ls -1 "$ARTIFACTS_DIR/review/"*-findings.md 2>/dev/null | wc -l | tr -d ' ')"
+      if [ "${count:-0}" -lt 1 ]; then
+        printf '{"has_findings":"false","count":0}'
+        exit 0
+      fi
+      printf '{"has_findings":"true","count":%s}' "$count"
+
+  # ─── Synthesize the five reviewers' artifacts into a consolidated review ──
+  # Uses the existing Archon synthesizer command; reads all *-findings.md
+  # files, decides APPROVE/REQUEST_CHANGES based on severity thresholds,
+  # posts a master review comment to the PR.
+  #
+  # trigger_rule: all_done — synthesize must read ALL five reviewers'
+  # artifacts, so it waits for every reviewer to settle. We use all_done
+  # rather than all_success / none_failed_min_one_success because a
+  # crashed individual reviewer shouldn't block the chain — the synth
+  # command handles missing findings files internally and produces a
+  # partial review from whatever DID land. The earlier `one_success`
+  # would have let synthesize fire while some reviewers were still
+  # running — only safe by accident because all five tend to complete
+  # within seconds of each other.
+  - id: synthesize
+    command: archon-synthesize-review
+    depends_on: [ verify-reviewer-artifacts ]
+    when: "$verify-reviewer-artifacts.output.has_findings == 'true'"
+    context: fresh
+
+  # ─── Parse the synthesizer's verdict into a JSON decision field ──
+  # The bundled archon-synthesize-review command emits prose narration on
+  # stdout and writes consolidated-review.md to disk — it does NOT emit a
+  # JSON `decision` field, so $synthesize.output.decision resolves to ''
+  # and downstream `when:` gates would always evaluate false.
+  # This bridge node reads the markdown verdict and re-emits it as JSON
+  # ({"decision":"approve"|"changes_requested"|"needs_discussion"}) on
+  # stdout so the implement-fixes / merge-pr gates can route correctly.
+  - id: parse-synthesis
+    depends_on: [ synthesize ]
+    bash: |
+      set -euo pipefail
+      export ARTIFACTS_DIR="$ARTIFACTS_DIR"
+      bun /home/user/Archon/.archon/scripts/task-parse-synthesis.ts
+
+  # ─── Implement fixes if synthesizer requested changes ──
+  # Existing Archon command; reads consolidated-review.md + per-reviewer
+  # findings; makes the changes; commits.
+  # Same PreToolUse hook as dev nodes (test paths + selective Bash).
+  - id: implement-fixes
+    # Our own fix-implementer (.archon/commands/defaults/task-implement-fixes.md — bundled), not
+    # the bundled archon-implement-review-fixes. The bundled command is built
+    # for human-in-the-loop workflows: it fixes only CRITICAL/HIGH and treats
+    # MEDIUM/LOW as "for the user to decide." Our pipeline is autonomous, so
+    # we want every actual issue (any severity) fixed in the same step,
+    # leaving only literal questions ("do you want X or Y?") for humans.
+    command: task-implement-fixes
+    depends_on: [ parse-synthesis ]
+    when: "$verify-pr-ready.output.ready == 'true' && $parse-synthesis.output.decision == 'changes_requested'"
+    context: fresh
+    hooks:
+      PreToolUse:
+        - script: /home/user/Archon/.archon/scripts/archie-pretooluse-no-tests.ts
+          timeout: 30
+
+  # ─── Deterministic quality gate after fixes ──
+  # Re-runs lint/typecheck/vitest/playwright. Always exits 0; the JSON output's
+  # `passed` field drives the merge gate's `when:` clause below.
+  # Only runs when implement-fixes ran (which itself only runs when synthesizer
+  # requested changes).
+  - id: post-fix-validation
+    depends_on: [ implement-fixes ]
+    when: "$verify-pr-ready.output.ready == 'true' && $parse-synthesis.output.decision == 'changes_requested'"
+    bash: |
+      set -euo pipefail
+      bash /home/user/Archon/.archon/scripts/task-run-validation.sh
+
+  # ─── Merge gate ──
+  # Two paths to merge:
+  #   1) Synthesizer approved on first read → no fixes needed, no post-validation needed.
+  #      synthesize: succeeded, implement-fixes: skipped, post-fix-validation: skipped.
+  #   2) Synthesizer requested changes → fixes ran AND post-fix-validation succeeded.
+  #      synthesize: succeeded, implement-fixes: succeeded, post-fix-validation: succeeded.
+  #
+  # If post-fix-validation FAILED (real test failure after fixes), merge-pr's
+  # all_done + when clause keeps it from running because validation didn't
+  # succeed — neither path is satisfied.
+  - id: merge-pr
+    depends_on: [ verify-pr-ready, parse-synthesis, implement-fixes, post-fix-validation ]
+    trigger_rule: all_done
+    # AND binds tighter than ||, so the gate reads as:
+    #   synth approved  OR  (synth requested changes AND post-fix passed)
+    # The bash itself guards against open-pr having been skipped (no
+    # pr-info.json on disk) — keeping that check in the consumer rather
+    # than the gate avoids duplicating `$open-pr.output.pr_number != ''`
+    # in every OR branch (Archon's condition evaluator has no parentheses).
+    when: "$verify-pr-ready.output.ready == 'true' &&
+      $parse-synthesis.output.decision == 'approve' ||
+      $verify-pr-ready.output.ready == 'true' &&
+      $parse-synthesis.output.decision == 'changes_requested' &&
+      $post-fix-validation.output.passed == 'true'"
+    bash: |
+      # Squash-merge the PR, delete the branch, post Jira confirmation.
+      set -euo pipefail
+      if [ ! -f "$ARTIFACTS_DIR/pr-info.json" ]; then
+        echo "No pr-info.json on disk — open-pr did not run, nothing to merge." >&2
+        printf '{"merged":"false","reason":"no_pr"}'
+        exit 0
+      fi
+      bun /home/user/Archon/.archon/scripts/task-merge-pr.ts
+
+  - id: transition-to-done
+    depends_on: [ merge-pr ]
+    bash: |
+      # Transition Jira ticket to Done with a final summary comment.
+      set -euo pipefail
+      export ARTIFACTS_DIR="$ARTIFACTS_DIR"
+      bun /home/user/Archon/.archon/scripts/task-transition-to-done.ts
+
+  - id: log-elapsed-on-task
+    depends_on: [ transition-to-done ]
+    bash: |
+      # Worklog the total task-implement elapsed time on the Jira ticket.
+      set -euo pipefail
+      export ARTIFACTS_DIR="$ARTIFACTS_DIR"
+      export WORKFLOW_NAME="task-implement"
+      bun /home/user/Archon/.archon/scripts/jira-log-elapsed.ts

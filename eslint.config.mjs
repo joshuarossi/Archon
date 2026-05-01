@@ -12,6 +12,7 @@ export default tseslint.config(
       'dist/**',
       'coverage/**',
       '.agents/examples/**',
+      '.archon/scripts/**', // Standalone Bun scripts invoked by workflow nodes (not in typed project graph)
       'packages/docs-web/**',
       'workspace/**',
       'worktrees/**',

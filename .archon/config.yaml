@@ -3,3 +3,7 @@ worktree:
 
 docs:
   path: packages/docs-web/src/content/docs
+
+jira:
+  projects:
+    WOR: joshuarossi/ConflictCoach
