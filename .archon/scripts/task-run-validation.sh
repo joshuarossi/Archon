@@ -132,6 +132,25 @@ has_script() {
 
 OVERALL=0
 
+# 0. Deterministic generated-test cleanup
+#
+# Test-gen may temporarily suppress red-state missing implementation imports
+# with @ts-expect-error. Once implementation exists, TypeScript reports those
+# comments as TS2578. The dev agent cannot edit tests, so validation removes
+# only TypeScript-proven obsolete directives from this ticket's generated test
+# scope and commits the cleanup before the gates below run.
+cleanup_log="$ATTEMPT_RESULTS_DIR/obsolete-ts-expect-error-cleanup.log"
+if bun /home/user/Archon/.archon/scripts/task-cleanup-obsolete-ts-expect-error.ts > "$cleanup_log" 2>&1; then
+  echo "✓ obsolete-ts-expect-error cleanup completed"
+  add_gate "obsolete-ts-expect-error-cleanup" "passed" "$cleanup_log"
+else
+  echo "✗ obsolete-ts-expect-error cleanup failed. Last 40 lines of output:"
+  tail -40 "$cleanup_log" | sed 's/^/  /'
+  add_gate "obsolete-ts-expect-error-cleanup" "failed" "$cleanup_log"
+  OVERALL=1
+fi
+echo
+
 # 1. Lint
 if has_script lint; then
   run_gate "lint" "npm run lint" || OVERALL=1

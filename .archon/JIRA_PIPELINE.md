@@ -213,6 +213,13 @@ merge-pr  (bash guards on pr-info.json existence; squash + delete-branch;
 transition-to-done → log-elapsed-on-task
 ```
 
+Each validation node first runs a deterministic generated-test cleanup
+preflight. That preflight removes only TypeScript-reported unused
+`@ts-expect-error` directives from this ticket's generated tests and commits the
+cleanup before lint/typecheck/test gates run. This lets test-gen use temporary
+red-state suppressions for not-yet-written imports without trapping the dev
+agent, who remains forbidden from editing tests.
+
 ### Key non-obvious decisions
 
 - **`rebase-on-main` runs BEFORE dev-attempt-1**, not after open-pr. If the
@@ -274,7 +281,8 @@ to stderr. The validation script uses `exec 3>&1 1>&2` to enforce this.
 | `task-verify-tests-exist.ts` | task-tests | halt the test-gen workflow if zero test files were committed |
 | `task-commit-push.ts` | task-tests | stage test-shaped files, commit, push to origin |
 | `task-transition-to-done.ts` | task-tests | transition the ticket to `In Progress` (which fires task-implement) |
-| `task-run-validation.sh` | task-implement (validate-1, validate-2, validate-loop, post-fix-validation) | run lint/typecheck/scoped-vitest/scoped-playwright; emit per-attempt JSON; reads ISSUE_KEY from `trigger-payload.json`, auto-detects attempt number from existing `feedback.attempt-*.json` files. Always exits 0 except inside dev-attempt-loop's until_bash where exit code derives from overall status |
+| `task-run-validation.sh` | task-implement (validate-1, validate-2, validate-loop, post-fix-validation) | run generated-test cleanup, lint/typecheck/scoped-vitest/scoped-playwright; emit per-attempt JSON; reads ISSUE_KEY from `trigger-payload.json`, auto-detects attempt number from existing `feedback.attempt-*.json` files. Always exits 0 except inside dev-attempt-loop's until_bash where exit code derives from overall status |
+| `task-cleanup-obsolete-ts-expect-error.ts` | task-run-validation.sh preflight | removes TypeScript-reported unused `@ts-expect-error` directives from this ticket's generated tests and commits that cleanup before validation gates run |
 | `task-open-pr.ts` | task-implement | push branch, open PR via `gh pr create`, write `pr-info.json` |
 | `task-parse-synthesis.ts` | task-implement (parse-synthesis) | read `consolidated-review.md`, grep verdict (APPROVE / REQUEST_CHANGES / NEEDS_DISCUSSION), emit `{decision: approve \| changes_requested \| needs_discussion}` JSON. Fail-closed to `changes_requested` on missing/unparseable input |
 | `task-merge-pr.ts` | task-implement (merge-pr) | squash-merge via `gh pr merge --squash --delete-branch` (no `--auto`); fetch the merge SHA; post Jira comment |
