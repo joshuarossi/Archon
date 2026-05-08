@@ -380,6 +380,53 @@ This is where the redesign stops being a refactor and becomes a different kind o
 
 ---
 
+## Architectural commitment: reactivity and event handling are first-class
+
+Before naming a specific implementation pattern, the architectural call is simpler than any of the candidate shapes below: **reactivity and event handling have to be the substrate, not a feature layered on top.**
+
+Today's Archon is a script runner. You hand it a workflow definition, it executes the DAG to completion, it emits a `workflow_runs` row, it's done. Webhooks and adapters are treated as "alternative ways to invoke a run" rather than as a fundamentally different shape of work. Every workflow has a finite lifetime; the engine has no concept of a long-lived process that's just *alive* between events.
+
+Archie has crossed into territory where that model doesn't fit. Tickets are a queue, transitions are events, labels are signals, the pipeline runs continuously, cascading unblock fires N runs from one Done event, and the Andon-cord pause label only makes sense if the system is otherwise *running*. None of that is exotic — it's just what happens when you commit to webhooks/transitions/labels as the input channel. But none of it is something Archon's substrate models natively. Today Archie hand-rolls each piece (project-scoped JQL sweeps, idempotency markers, label-as-pause, hand-counted concurrency in `task-done`); a substrate that took reactivity seriously would handle them as substrate-level concerns.
+
+The commitment is therefore not "adopt observables" or "switch to actors" or "use Node's event loop." It's the level above: **the runtime is a thing that processes events as they arrive and reacts to value changes, rather than a thing that executes a script you handed it.** From that commitment, multiple implementation shapes work:
+
+- **Observables (RxJS / ReactiveX style).** Each node is an `Observable<T>`. Composition via `merge`, `combineLatest`, `forkJoin`, `switchMap`, `retry`, `takeUntil`, `share`. Iteration is just an observable emitting more values over time; completion is `complete()`; errors are `error()`. (See "Synthesis: nodes as observables" below — this is the shape the lenses 0–3 converged on independently.)
+- **Actors (Erlang / OTP / Akka style).** Each node is an isolated actor with a mailbox. Composition via message passing. Supervision trees handle failure. Long-lived state belongs to the actor, not the engine. Backpressure is explicit (mailbox depth).
+- **Channels (Go / CSP style).** Each node reads from and writes to typed channels. Composition via `select` over multiple channels. Lifecycle is explicit (close the channel to signal done). Backpressure is explicit (channel buffering).
+- **Node's event loop with typed events.** Each node is an event handler registered against a typed event bus. Composition is "subscribe to event X, emit event Y." Familiar shape; less rigorous about lifecycle than the others.
+
+These are not equivalent — they make different other things first-class:
+
+| Shape | Also first-class | Tradeoff |
+|---|---|---|
+| Observables | Composition operators, lazy evaluation, declarative pipelines | Static analysis is harder; observability shifts to emission timelines |
+| Actors | Isolation, supervision, location-transparency | Composition is message-shaped, not pipe-shaped; harder to reason about as a graph |
+| Channels | Backpressure, explicit lifecycle, fan-in selection | More verbose; composition operators have to be hand-written |
+| Node event loop | Familiarity, low cognitive shift for JS authors | Lifecycle is implicit; "everything is callbacks" pain reappears at scale |
+
+The right pick for Archon's workload depends on what *else* matters most. For Archie's actual load — long-lived sources you can't kill (Jira webhooks, GitHub events), dynamic fan-out that happens at runtime (one Done event triggers N unblock-and-promote actions), observability that has to show "what's currently in flight" rather than "did this run complete," concurrency caps you can adjust without redeploying — observables and channels both fit cleanly. Actors fit too but introduce isolation complexity Archie doesn't need (single process, single host, single developer). Node event loop fits the substrate question but doesn't give you the operator vocabulary, so you'd reinvent it case-by-case.
+
+The shared point across all four: **reactivity and event handling stop being orchestration concerns the workflow author has to handle node-by-node, and become substrate primitives the runtime provides natively.** That's the architectural call. Implementation is downstream.
+
+The synthesis section below ("nodes as observables") is one specific expression of that commitment — the one lenses 0–3 converged on, with the deepest worked-out vocabulary. It's not the only valid answer; it's the one most thoroughly explored.
+
+### Prior art is older and broader than RxJS
+
+Worth surfacing because the framing matters: observables are a foundational CS pattern, not a JS library invention. The lineage runs back through:
+
+- **Dataflow languages and Kahn process networks (1970s)** — values flowing through a graph of processing nodes, each node reacting to inputs from upstream, producing outputs downstream. Same algebra as observables, four decades earlier.
+- **Smalltalk MVC (1979)** — views as observers of model state. The original "observer" pattern in production software.
+- **Spreadsheets (VisiCalc 1979 onward)** — every cell is a node that reacts to its inputs. Mainstream reactive computing for forty years.
+- **Functional Reactive Programming (Conal Elliott, 1997)** — explicitly thought about long-lived value streams (`Behavior`, continuous over time) composing with bounded events (`Event`, discrete). Same algebra; same "bounded composes with unbounded" property that matters for Archie.
+- **GoF Observer pattern (1994)** — one of the original 23 design patterns; the formal write-up of what was already common in GUI frameworks.
+- **Erlang/OTP (1986)** — actor-style reactive runtime running production telecom workloads for nearly four decades. Different shape from observables; same architectural commitment.
+- **Erik Meijer's Rx (2009)** — the observable-iterator duality made explicit; a *standard operator vocabulary* (map, filter, merge, combineLatest, switchMap, retry) calcified across implementations.
+- **RxJS, RxJava, Combine, Kotlin Flow, Project Reactor (2010s onward)** — popular vocabularies, not the source.
+
+Calling out RxJS as *the* prior art undersells the subsumption. The pattern is old, well-understood, and any author who's used a spreadsheet, a Unix pipeline, or a GUI framework has the intuitions for it. The cognitive-load tax of moving Archon to a reactive substrate is mostly notation, not concepts.
+
+---
+
 ## Synthesis: nodes as observables
 
 After lenses 0–3, the model is converging on something with a deep prior art: **observables (RxJS / ReactiveX semantics) applied to workflow execution.**
