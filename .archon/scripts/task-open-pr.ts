@@ -13,6 +13,7 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { postWorkflowComment } from './lib/jira-comment';
 
 const execFileAsync = promisify(execFile);
 
@@ -141,14 +142,17 @@ try {
 
 // Comment on the Jira ticket
 console.log('Posting PR link as a Jira comment...');
-const commentInput = JSON.stringify({
-  action: 'addComment',
-  issueKey: trigger.issue_key,
-  text: `PR opened: ${prUrl}`,
-});
 try {
-  await execFileAsync('bun', ['/home/user/Archon/.archon/scripts/jira-tool.js', commentInput], {
-    maxBuffer: 50 * 1024 * 1024,
+  await postWorkflowComment({
+    issueKey: trigger.issue_key,
+    level: 'info',
+    body: `Opened PR ${prUrl}:\n**${trigger.issue_key} — ${taskTitle}**\n\n- Branch: \`${branch}\`\n- Base: \`main\``,
+    fields: {
+      pr_number: prNumber,
+      pr_url: prUrl,
+      branch,
+      base: 'main',
+    },
   });
   console.log('Jira comment posted.');
 } catch (e) {

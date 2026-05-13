@@ -14,6 +14,7 @@
 import { readFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { postWorkflowComment } from './lib/jira-comment';
 
 const execFileAsync = promisify(execFile);
 
@@ -66,23 +67,30 @@ async function callJiraTool(input: object): Promise<unknown> {
   }
 }
 
-const commentLines = [
-  `Autonomous: test-gen complete.`,
-  '',
-  `- ${testFileCount} test file(s) written and committed.`,
-  `- Branch: \`${branch}\`${sha ? ` at \`${sha.slice(0, 8)}\`` : ''}.`,
+const bodyLines = [
+  `Test-gen complete. Transitioning to **In Progress** for the dev agent.`,
+  ``,
+  `- Test files committed: **${testFileCount}**`,
+  `- Branch: \`${branch}\`${sha ? ` at \`${sha.slice(0, 8)}\`` : ''}`,
 ];
 if (testFiles.length > 0 && testFiles.length <= 10) {
-  commentLines.push('- Files:');
-  for (const f of testFiles) commentLines.push(`    - \`${f}\``);
+  bodyLines.push(`- Files: ${testFiles.map(f => `\`${f}\``).join(', ')}`);
 }
-commentLines.push('');
-commentLines.push('Transitioning to In Progress so the dev agent can begin implementation. The dev agent has no read access to the test files — its job is to satisfy the ACs honestly.');
-
-const comment = commentLines.join('\n');
 
 console.log(`Posting comment on ${trigger.issue_key}...`);
-await callJiraTool({ action: 'addComment', issueKey: trigger.issue_key, text: comment });
+await postWorkflowComment({
+  issueKey: trigger.issue_key,
+  level: 'info',
+  body: bodyLines.join('\n'),
+  fields: {
+    from_status: 'Selected for Development',
+    to_status: 'In Progress',
+    test_files_committed: testFileCount,
+    test_files: testFiles,
+    branch,
+    sha: sha || null,
+  },
+});
 console.log('Comment posted.');
 
 console.log(`Transitioning ${trigger.issue_key} → In Progress...`);

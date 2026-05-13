@@ -34,6 +34,7 @@
 import { readFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { postWorkflowComment } from './lib/jira-comment';
 
 const execFileAsync = promisify(execFile);
 
@@ -182,11 +183,15 @@ for (const candidate of searchResult.issues) {
     });
     if (res.ok) {
       promoted.push(candidate.key);
-      // Lightweight comment for audit.
-      await jiraToolCall({
-        action: 'addComment',
+      await postWorkflowComment({
         issueKey: candidate.key,
-        text: `Promoted automatically: no remaining blockers (triggered by ${thisKey} → Done).`,
+        level: 'info',
+        body: `Promoted to **Selected for Development** — no remaining blockers (triggered by ${thisKey} → Done).`,
+        fields: {
+          from_status: 'Backlog',
+          to_status: 'Selected for Development',
+          triggered_by: thisKey,
+        },
       }).catch(() => undefined);
       if (promoted.length >= PROMOTE_CAP) {
         log(`  WIP cap reached (${PROMOTE_CAP}); deferring further promotions to subsequent Done events.`);
@@ -224,10 +229,15 @@ if (parentKey) {
       });
       if (res.ok) {
         epicCompleted = parentKey;
-        await jiraToolCall({
-          action: 'addComment',
+        await postWorkflowComment({
           issueKey: parentKey,
-          text: `Epic completed: all child tickets are Done (last was ${thisKey}).`,
+          level: 'info',
+          body: `Epic completed — all child tickets reached **Done**. Last was ${thisKey}.`,
+          fields: {
+            from_status: 'In Progress',
+            to_status: 'Done',
+            last_child: thisKey,
+          },
         }).catch(() => undefined);
       } else {
         log(`    ✗ epic transition failed: ${res.error}`);
@@ -238,17 +248,24 @@ if (parentKey) {
   }
 }
 
-// Comment on the just-Done ticket summarizing what we did.
-const summaryParts = [
-  `Done handler ran:`,
-  `  • Outward Blocks links deleted: ${deletedCount}`,
-  `  • Tickets promoted to Selected for Development: ${promoted.length}${promoted.length > 0 ? ` (${promoted.join(', ')})` : ''}`,
-  `  • Parent Epic completed: ${epicCompleted ?? 'no'}`,
+const bodyLines = [
+  `Done handler ran on ${thisKey}.`,
+  ``,
+  `- Outward Blocks links deleted: **${deletedCount}**`,
+  `- Tickets promoted to Selected for Development: **${promoted.length}**${promoted.length > 0 ? ` (${promoted.join(', ')})` : ''}`,
+  `- Parent Epic completed: ${epicCompleted ? `**${epicCompleted}**` : 'no'}`,
 ];
-await jiraToolCall({
-  action: 'addComment',
+await postWorkflowComment({
   issueKey: thisKey,
-  text: summaryParts.join('\n'),
+  level: 'info',
+  body: bodyLines.join('\n'),
+  fields: {
+    outward_blocks_deleted: deletedCount,
+    tickets_promoted: promoted,
+    promote_cap: PROMOTE_CAP,
+    epic_completed: epicCompleted,
+    parent_key: parentKey ?? null,
+  },
 }).catch(() => undefined);
 
 process.stdout.write(

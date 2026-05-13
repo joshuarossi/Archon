@@ -12,6 +12,7 @@
 import { readFile, access } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { postWorkflowComment } from './lib/jira-comment';
 
 const execFileAsync = promisify(execFile);
 
@@ -66,10 +67,15 @@ const attached = (await callJiraTool({
 console.log(`Attached: ${attached.filename} (id ${attached.attachmentId}, ${attached.size} bytes).`);
 
 console.log('Posting confirmation comment on Epic...');
-await callJiraTool({
-  action: 'addComment',
+await postWorkflowComment({
   issueKey: trigger.issue_key,
-  text: 'Epic decomposition plan attached: decomposition-plan.md',
+  level: 'meta',
+  body: `Decomposition plan attached: \`decomposition-plan.md\` (${attached.size} bytes).`,
+  fields: {
+    attachment_id: attached.attachmentId,
+    filename: attached.filename,
+    size_bytes: attached.size,
+  },
 });
 console.log('Comment posted.');
 
