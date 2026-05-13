@@ -62,23 +62,39 @@ async function runGetIssue(input) {
 
 async function runAddComment(input) {
   assertIssueKey(input.issueKey);
+  // Resolve the comment body. Precedence: textMarkdownFile > textMarkdown > text.
+  // The first two paths render markdown to ADF (headings, lists, fenced code
+  // blocks) so Jira shows structured content; `text` falls back to single-
+  // paragraph plain text for legacy callers.
+  let bodyAdf;
+  let previewText = input.text ?? '';
+  if (input.textMarkdownFile !== undefined) {
+    const md = await readFile(input.textMarkdownFile, 'utf8');
+    bodyAdf = mdToAdf(md);
+    previewText = md;
+  } else if (input.textMarkdown !== undefined) {
+    bodyAdf = mdToAdf(input.textMarkdown);
+    previewText = input.textMarkdown;
+  } else if (input.text !== undefined) {
+    // Multi-line `text` should still render as markdown — single-paragraph
+    // collapsing was the historical behavior but it makes structured
+    // comments unreadable. Route through mdToAdf so newlines and code
+    // fences survive.
+    bodyAdf = mdToAdf(input.text);
+  } else {
+    throw new Error('addComment requires text, textMarkdown, or textMarkdownFile');
+  }
   if (input.dryRun) {
     return {
       dryRun: true,
       action: input.action,
       issueKey: input.issueKey,
-      text: input.text,
+      text: previewText,
     };
   }
   return await jiraRequest(`/rest/api/3/issue/${encodeURIComponent(input.issueKey)}/comment`, {
     method: 'POST',
-    body: JSON.stringify({
-      body: {
-        type: 'doc',
-        version: 1,
-        content: [{ type: 'paragraph', content: [{ type: 'text', text: input.text }] }],
-      },
-    }),
+    body: JSON.stringify({ body: bodyAdf }),
   });
 }
 

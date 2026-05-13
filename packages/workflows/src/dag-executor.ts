@@ -1273,6 +1273,7 @@ async function executeBashNode(
   conversationId: string,
   cwd: string,
   workflowRun: WorkflowRun,
+  workflowName: string,
   node: BashNode,
   artifactsDir: string,
   logDir: string,
@@ -1328,6 +1329,13 @@ async function executeBashNode(
     ARTIFACTS_DIR: artifactsDir,
     LOG_DIR: logDir,
     BASE_BRANCH: baseBranch,
+    // Workflow runtime context — consumed by scripts that post structured
+    // Jira comments via `.archon/scripts/lib/jira-comment.ts`. WORKFLOW_NAME
+    // and NODE_ID drive the comment header; WORKFLOW_RUN_ID is the join key
+    // for run/log correlation. See `.archon/ARCHIE_COMMENT_FORMAT.md`.
+    WORKFLOW_NAME: workflowName,
+    NODE_ID: node.id,
+    WORKFLOW_RUN_ID: workflowRun.id,
     ...(envVars ?? {}),
   };
 
@@ -2719,6 +2727,7 @@ export async function executeDagWorkflow(
               conversationId,
               cwd,
               workflowRun,
+              workflow.name,
               node,
               artifactsDir,
               logDir,

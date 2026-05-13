@@ -12,6 +12,7 @@
 import { readFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { postWorkflowComment } from './lib/jira-comment';
 
 const execFileAsync = promisify(execFile);
 
@@ -77,14 +78,18 @@ try {
 
 // Post a Jira comment linking the merge.
 console.log(`Posting merge confirmation to ${trigger.issue_key}...`);
-const commentInput = JSON.stringify({
-  action: 'addComment',
-  issueKey: trigger.issue_key,
-  text: `PR #${prInfo.pr_number} merged: ${prInfo.pr_url} (commit ${mergeSha.slice(0, 8)})`,
-});
 try {
-  await execFileAsync('bun', ['/home/user/Archon/.archon/scripts/jira-tool.js', commentInput], {
-    maxBuffer: 50 * 1024 * 1024,
+  await postWorkflowComment({
+    issueKey: trigger.issue_key,
+    level: 'info',
+    body: `PR #${prInfo.pr_number} squash-merged into \`main\`.\n\n- PR: ${prInfo.pr_url}\n- Merge commit: \`${mergeSha.slice(0, 8)}\``,
+    fields: {
+      pr_number: prInfo.pr_number,
+      pr_url: prInfo.pr_url,
+      branch: prInfo.branch,
+      merge_strategy: 'squash',
+      merge_sha: mergeSha,
+    },
   });
 } catch (e) {
   const err = e as { stdout?: string; message?: string };

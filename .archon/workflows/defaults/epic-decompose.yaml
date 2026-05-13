@@ -912,18 +912,59 @@ nodes:
            confirm the new entry is present. Downstream nodes depend on
            this file existing.
 
-        6. Add a confirmation comment on the new Jira issue. Same file-input
-           pattern:
+        6. Add a confirmation comment on the new Jira issue. The comment
+           MUST follow the canonical Archie comment format (see
+           `.archon/ARCHIE_COMMENT_FORMAT.md`). Build the comment text by
+           filling this template exactly. Substitute: `{epic_key}` from
+           trigger-payload.json, `{task_id}` from the plan, `{jira_key}`
+           from step 4e, `{run_id}` from `$WORKFLOW_RUN_ID` env (first 8
+           chars for the metadata line; full id in the JSON payload),
+           `{node_id}` is the literal string `process-tasks`,
+           `{workflow_name}` is the literal string `epic-decompose`, and
+           `{iso_timestamp}` is the current UTC time formatted like
+           `2026-05-13T18:42:11Z` (no fractional seconds).
 
-           a. Write to `$ARTIFACTS_DIR/.tmp/jira-comment.json`:
+           Template (everything inside `<<<` and `>>>` is the comment
+           text — emit it verbatim with substitutions):
+
+           <<<
+           🧭 {workflow_name} / {node_id}
+           run {short_run_id} · {iso_timestamp}
+
+           Created from Epic decomposition. Currently labeled
+           `archon-blocked-pending` — will be released when the operator
+           manually transitions a root ticket. See the Epic's final
+           comment for the paused-checkpoint summary.
+
+           ```json
+           {
+             "level": "meta",
+             "workflow": "{workflow_name}",
+             "node": "{node_id}",
+             "run_id": "{run_id}",
+             "issue_key": "{jira_key}",
+             "fields": {
+               "epic_key": "{epic_key}",
+               "plan_task_id": "{task_id}",
+               "label_state": "archon-blocked-pending"
+             }
+           }
+           ```
+           >>>
+
+           a. Write the rendered comment text to a file (so multi-line
+              content stays clean):
+                  $ARTIFACTS_DIR/.tmp/<T.task_id>-comment.md
+
+           b. Write to `$ARTIFACTS_DIR/.tmp/jira-comment.json`:
 
               {
                 "action": "addComment",
                 "issueKey": "<new Jira key>",
-                "text": "Created from Epic <epic_key> decomposition, plan task_id <T.task_id>. Currently labeled archon-blocked-pending; will be unblocked once dependency links are in place."
+                "textMarkdownFile": "<absolute path to the .md file from step 6a>"
               }
 
-           b. Run:
+           c. Run:
                   JIRA_TOOL_INPUT_FILE=$ARTIFACTS_DIR/.tmp/jira-comment.json \
                     bun /home/user/Archon/.archon/scripts/jira-tool.js
 
@@ -959,32 +1000,22 @@ nodes:
       export ARTIFACTS_DIR="$ARTIFACTS_DIR"
       bun /home/user/Archon/.archon/scripts/jira-create-blocks-links.ts
 
-  # --- Plumbing: strip label and transition root tasks (no blockers) to Selected for Development ---
-  - id: unblock-roots
+  # --- Plumbing: post final summary comment on Epic (paused checkpoint) ---
+  # The legacy `unblock-roots` and `unstick-rest` nodes have been removed:
+  # every decomposed ticket stays in Backlog with the `archon-blocked-pending`
+  # label after decomposition completes. The jira-task-done sweep respects
+  # this label and will NOT promote labeled tickets, so the whole plan
+  # remains paused until a human manually strips the label from one ticket
+  # and transitions it to Selected for Development. From that point, the
+  # PROMOTE_CAP=1 in jira-task-done.ts releases dependents one-at-a-time
+  # as each ticket reaches Done. This is the "pause-after-decompose"
+  # checkpoint — the operator inspects the plan + tickets before releasing
+  # any work into the per-ticket pipeline.
+  - id: final-comment
     depends_on: [ create-blocks-links ]
     bash: |
-      # For tasks with no declared blockers: remove archon-blocked-pending label and transition to Selected for Development.
       set -euo pipefail
-      export ARTIFACTS_DIR="$ARTIFACTS_DIR"
-      bun /home/user/Archon/.archon/scripts/jira-unblock-roots.ts
-
-  # --- Plumbing: strip label from non-root tasks (they remain in Backlog awaiting their blockers) ---
-  - id: unstick-rest
-    depends_on: [ unblock-roots ]
-    bash: |
-      # For tasks with declared blockers: remove archon-blocked-pending label only (stay in Backlog until blockers Done).
-      set -euo pipefail
-      export ARTIFACTS_DIR="$ARTIFACTS_DIR"
-      bun /home/user/Archon/.archon/scripts/jira-unstick-rest.ts
-
-  # --- Plumbing: post final summary comment on Epic ---
-  - id: final-comment
-    depends_on: [ unstick-rest ]
-    bash: |
-      # Post a final summary comment on the Epic: tasks created, links made, roots transitioned.
-      set -euo pipefail
-      export ARTIFACTS_DIR="$ARTIFACTS_DIR"
-      bun /home/user/Archon/.archon/scripts/jira-final-comment.ts
+      bun /home/user/Archon/.archon/scripts/jira-epic-decompose-final-comment.ts
 
   # --- Plumbing: log total workflow elapsed time as a worklog on the Epic ---
   - id: log-elapsed-on-epic

@@ -300,11 +300,10 @@ to stderr. The validation script uses `exec 3>&1 1>&2` to enforce this.
 | `jira-create-blocks-links.ts` | bulk-create Blocks links from a plan |
 | `jira-delete-blocks-links.ts` | bulk-delete Blocks links |
 | `jira-cleanup-children.ts` | delete Archon-created child tickets (heuristic: `archon-blocked-pending` label presence) |
-| `jira-unblock-roots.ts` | strip `archon-blocked-pending` from tasks with no declared blockers; transition them to `Selected for Development` |
-| `jira-unstick-rest.ts` | strip `archon-blocked-pending` from tasks with declared blockers (they stay in Backlog until blockers Done) |
 | `jira-transition-task-to-in-progress.ts` | helper: transition issue to In Progress |
-| `jira-final-comment.ts` | post a final summary comment after work is merged |
+| `jira-epic-decompose-final-comment.ts` | post the PAUSED-checkpoint summary comment after decomposition completes; tickets stay in Backlog with `archon-blocked-pending` until the operator manually releases the first root |
 | `jira-log-elapsed.ts` | append elapsed-time worklog to a ticket |
+| `lib/jira-comment.ts` | canonical Jira comment formatter (`postWorkflowComment` + `formatElapsed`); see `ARCHIE_COMMENT_FORMAT.md` |
 | **`jira-task-done.ts`** | the task-done handler — deletes outward Blocks, project-sweeps + promotes unblocked tickets, rolls up the parent Epic if all children Done. JQL filter excludes `archon-blocked-pending` |
 
 ---

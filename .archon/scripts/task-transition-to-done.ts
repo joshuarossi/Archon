@@ -13,6 +13,7 @@
 import { readFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { postWorkflowComment, formatElapsed } from './lib/jira-comment';
 
 const execFileAsync = promisify(execFile);
 
@@ -39,10 +40,10 @@ try {
   // pr-info absent — workflow finished without opening one. Fine.
 }
 
-let elapsedMin = 0;
+let elapsedMs = 0;
 try {
   const startMs = parseInt((await readFile(`${artifactsDir}/.workflow-start-ms`, 'utf8')).trim(), 10);
-  elapsedMin = Math.round((Date.now() - startMs) / 60000);
+  elapsedMs = Math.max(0, Date.now() - startMs);
 } catch {
   // ignore
 }
@@ -62,21 +63,26 @@ async function callJiraTool(input: object): Promise<unknown> {
   }
 }
 
-const summaryLines: string[] = [];
-summaryLines.push(`Autonomous: task-implement complete.`);
-summaryLines.push('');
-if (prUrl) {
-  summaryLines.push(`PR ${prUrl} merged into main.`);
-}
-if (elapsedMin > 0) {
-  summaryLines.push(`Total wall-time: ${elapsedMin}m.`);
-}
-summaryLines.push('');
-summaryLines.push('Transitioning to Done.');
-const summary = summaryLines.join('\n');
+const bodyLines: string[] = [];
+bodyLines.push(`task-implement complete. Transitioning to **Done**.`);
+if (prUrl || elapsedMs > 0) bodyLines.push('');
+if (prUrl) bodyLines.push(`- PR: ${prUrl} (merged into main)`);
+if (elapsedMs > 0) bodyLines.push(`- Wall-time: ${formatElapsed(elapsedMs)}`);
 
 console.log(`Posting final summary on ${trigger.issue_key}...`);
-await callJiraTool({ action: 'addComment', issueKey: trigger.issue_key, text: summary });
+await postWorkflowComment({
+  issueKey: trigger.issue_key,
+  level: 'info',
+  body: bodyLines.join('\n'),
+  metaFact: elapsedMs > 0 ? `elapsed ${formatElapsed(elapsedMs)}` : undefined,
+  fields: {
+    from_status: 'In Progress',
+    to_status: 'Done',
+    pr_number: prNumber || null,
+    pr_url: prUrl || null,
+    elapsed_ms: elapsedMs,
+  },
+});
 
 console.log(`Transitioning ${trigger.issue_key} → Done...`);
 await callJiraTool({ action: 'transitionIssue', issueKey: trigger.issue_key, toStatus: 'Done' });
