@@ -32,7 +32,7 @@ nodes:
       experiments_root="/home/user/Archon/.archon/experiments/decomposition"
       input_arg=$ARGUMENTS
       if [ -z "$input_arg" ]; then
-        echo "Usage: archon workflow run v2-epic-decomposition-mark3 <input-dir-relative-to-experiments/decomposition/>" >&2
+        echo "Usage: archon workflow run v2-epic-decomposition-mark4 <input-dir-relative-to-experiments/decomposition/>" >&2
         exit 1
       fi
       input_dir="$experiments_root/$input_arg"
@@ -48,7 +48,7 @@ nodes:
         echo "Missing $input_dir/attachments/" >&2
         exit 1
       fi
-      run_name="mark3-$(basename "$input_arg")-$(date +%Y%m%d-%H%M%S)"
+      run_name="mark4-$(basename "$input_arg")-$(date +%Y%m%d-%H%M%S)"
       printf '{"input_dir":"%s","experiments_root":"%s","run_name":"%s"}\n' \
         "$input_dir" "$experiments_root" "$run_name"
 
@@ -841,9 +841,9 @@ nodes:
       cp -r "$ARTIFACTS_DIR/plan-evaluations" "$out/plan-evaluations" 2>/dev/null || true
 
       cat > "$out/summary.md" <<EOF
-      # v2 Mark3 — Run $run_name
+      # v2 Mark4 — Run $run_name
 
-      Workflow: v2-epic-decomposition-mark3
+      Workflow: v2-epic-decomposition-mark4
       Started: $(date -Iseconds)
       Source artifacts: $ARTIFACTS_DIR
 
