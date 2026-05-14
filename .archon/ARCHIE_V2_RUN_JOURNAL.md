@@ -1759,3 +1759,41 @@ Two PRs:
 Once both PRs merge: re-fire WOR-100 (it was abandoned mid-run when I
 discovered the bug). Then let the auto-sweep release the rest of the
 backlog one ticket at a time.
+
+---
+
+## Entry — 2026-05-14, 12:20 CDT — Resolution + WOR-100 lucky landing
+
+All four PRs merged in close succession:
+- Clarity #9 — WOR-100 (privacyFilter) implementation
+- Clarity #10 — commit `convex/_generated/`
+- Archon #25 — validator scope fix + fail-not-skip
+- Archon #26 — journal entry
+
+Sanity check on Clarity `main` post-merges: `npx vitest run tests/unit`
+returns **181/181 pass across 7 test files** including the new
+30-test `privacyFilter.test.ts`. So:
+
+1. WOR-97's auth tests are now green retroactively (was 0/12, now 12/12).
+2. WOR-100's privacyFilter merged via the broken validator before the
+   fix landed — we got lucky. The implementation passes its tests
+   when actually executed; the dev agent didn't smuggle anything
+   broken through the silent SKIP. But this is exactly the failure
+   mode the bug enabled: a less-attentive dev attempt could have
+   merged with broken tests and nobody would have noticed.
+3. From here on, every task-implement run will execute the full
+   `tests/unit/` suite, FAIL on missing `tests/`, and the cage
+   prevents the dev agent from sneaking around it. Defense back in
+   place.
+
+The auto-sweep should now be eligible to promote the next root
+ticket on the next `Done` event. Looking at the dependency graph,
+with WOR-95–100 + WOR-97 + WOR-138 (scaffolding) all Done, the next
+tickets eligible to sweep are: WOR-102 (App shell), WOR-103
+(Theme/style setup), WOR-106 (Seed data), WOR-107 (Playwright
+infra), WOR-108 (CI pipeline), WOR-109 (Auth Convex module). All of
+these have zero remaining blockers. The sweep cap=1 will pick the
+first by issuekey: WOR-102 (App shell — Vite + React +
+ConvexProvider routing). That's a frontend ticket — first
+non-pure-helper, first React surface. Worth keeping the journal
+close for it.
