@@ -13,13 +13,20 @@
 #   ISSUE_KEY      — Jira ticket key (selects which test scope to run)
 #
 # Policy:
-# - Blocking gates for task-implement are the ticket-scoped test suites
-#   (Vitest + Playwright under ISSUE_KEY scope).
-# - Lint/typecheck are blocking only when failures reference THIS ticket's
-#   scope: files under tests/<ISSUE_KEY>/ and e2e/<ISSUE_KEY>/ (case-insensitive),
-#   OR files that appear in git diff baseline..HEAD for this run (so prod code
-#   the dev touched is still enforced). Failures that only mention other
-#   tickets' tests (e.g. tests/wor-41) are logged but non-blocking.
+# - Blocking gates for task-implement are the project's vitest + playwright
+#   suites under tests/ and e2e/ (any layout the project chose — flat
+#   tests/unit/, per-ticket folders, mirrored convex/ tree, etc.). The cage
+#   in task-implement forbids the dev agent from editing test files, so
+#   running the broader suite cannot regress unrelated tests — it only
+#   catches genuine implementation drift.
+# - Earlier versions of this script scoped vitest to tests/<ISSUE_KEY>/;
+#   when the contract-author convention changed to tests/unit/, that gate
+#   silently SKIPped on every ticket, letting tickets merge with
+#   unexecuted unit tests. tests/ as a whole is the correct scope.
+# - Lint/typecheck are blocking only when failures reference files that
+#   appear in git diff baseline..HEAD for this run (so prod code the dev
+#   touched is enforced). Failures that only mention other tickets'
+#   files are logged but non-blocking.
 #
 set -uo pipefail
 
@@ -79,25 +86,8 @@ fi
 existing=$(ls "$ARTIFACTS_DIR"/feedback.attempt-*.json 2>/dev/null | wc -l)
 ATTEMPT_NUM=$((existing + 1))
 
-# Resolve the per-ticket test directory case-insensitively. The Jira key is
-# uppercase (WOR-23) but test-gen agents have scaffolded tests under both
-# tests/WOR-23/ and tests/wor-23/ on different runs; rather than fight that,
-# locate whichever exists. Falls back to the lowercase form if neither
-# exists, so the SKIP message is consistent.
-find_ticket_dir() {
-  local parent="$1"
-  local key_lc key_uc
-  key_lc=$(echo "$ISSUE_KEY" | tr '[:upper:]' '[:lower:]')
-  key_uc=$(echo "$ISSUE_KEY" | tr '[:lower:]' '[:upper:]')
-  if [ -d "$parent/$ISSUE_KEY" ]; then echo "$parent/$ISSUE_KEY"
-  elif [ -d "$parent/$key_lc" ]; then echo "$parent/$key_lc"
-  elif [ -d "$parent/$key_uc" ]; then echo "$parent/$key_uc"
-  else echo "$parent/$key_lc"  # fallback for the SKIP message
-  fi
-}
-
-VITEST_DIR=$(find_ticket_dir tests)
-PLAYWRIGHT_DIR=$(find_ticket_dir e2e)
+VITEST_DIR=tests
+PLAYWRIGHT_DIR=e2e
 
 # Per-attempt artifact paths. validate-1 writes to feedback.attempt-1.json
 # and test-results/attempt-1/; validate-2 writes to attempt-2 paths. The
@@ -156,6 +146,18 @@ skip_gate() {
   local name="$1" reason="$2"
   echo "── SKIP: $name ($reason) ──"
   add_gate "$name" "skipped" "/dev/null" "false" "false"
+}
+
+# Record a gate as a failure without running anything. Used when a gate's
+# precondition is missing (e.g. no tests/ directory). The status is
+# "failed", blocking, and relevant — i.e. it counts against OVERALL.
+fail_gate() {
+  local name="$1" reason="$2"
+  echo "── FAIL: $name ($reason) ──"
+  local log
+  log=$(mktemp)
+  printf '%s\n' "$reason" > "$log"
+  add_gate "$name" "failed" "$log" "true" "true"
 }
 
 has_script() {
@@ -338,11 +340,15 @@ else
 fi
 echo
 
-# 3. Vitest scoped to this ticket's tests (case-insensitive dir resolution)
+# 3. Vitest against the project's full test tree under tests/.
+# Missing tests/ is a FAIL, not a SKIP: every Clarity-style task ticket
+# implies a unit-test artifact, and a silent SKIP previously let tickets
+# merge with unexecuted vitest (PR fix/validator-scope-tests-unit).
 if [ -d "$VITEST_DIR" ]; then
   run_gate "vitest" "npx vitest run $VITEST_DIR --reporter=default" "true" "true" || OVERALL=1
 else
-  skip_gate "vitest" "$VITEST_DIR/ does not exist"
+  fail_gate "vitest" "$VITEST_DIR/ does not exist — expected unit tests under tests/"
+  OVERALL=1
 fi
 echo
 
