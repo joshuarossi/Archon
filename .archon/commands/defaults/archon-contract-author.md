@@ -90,6 +90,15 @@ Then explore the working directory:
   in the same area. Their conventions are the conventions.
 - Read package.json, tsconfig.json, vitest.config.ts, playwright.config.ts
   to understand the test layer setup.
+- **Glob for existing test files** — look in `tests/`, `e2e/`,
+  `__tests__/`, and next to source files (co-located). The project's
+  existing test directory structure is the convention you must match
+  when you specify `tested_by[].file` paths in the contract. If the
+  project has `tests/unit/` and `tests/integration/` already populated,
+  write your test paths under those. If tests are co-located next to
+  source, do the same. Never invent per-ticket folders like
+  `tests/<task-id>/` — that organizes tests by who wrote them rather
+  than by what they test, and that's never the right grouping.
 
 **PHASE_1_CHECKPOINT:**
 - [ ] Every acceptance criterion is in your notes.
@@ -97,6 +106,9 @@ Then explore the working directory:
       is in your notes.
 - [ ] You know which existing files this work modifies vs. creates.
 - [ ] You know the project's file-layout conventions for this kind of work.
+- [ ] You know the project's **test directory convention** — which
+      directories existing tests live in. You will use this in Phase 2
+      when assigning `tested_by[].file` paths.
 - [ ] You know which Convex queries / API endpoints / types this work
       consumes (read-only) vs. defines (write).
 
@@ -170,6 +182,21 @@ For every piece of work this ticket entails, decide ONCE:
   both. ACs whose enforcement is server-side (privacy filters, query
   scoping, state-machine guards) often require `e2e` because the unit
   tests mock the data layer; that is fine, just call it out.
+- For each AC, decide the test file path. **The path must match the
+  project's existing test directory convention** (which you discovered
+  in Phase 1). Examples of conventions you might find:
+    - `tests/unit/<area>.test.ts` and `tests/integration/<area>.test.ts`
+      and `e2e/<flow>.spec.ts`
+    - Co-located: `src/foo/bar.test.ts` next to `src/foo/bar.ts`
+    - Domain-grouped: `tests/<domain>/<feature>.test.ts`
+  Pick the convention the project already uses. **Never invent
+  per-ticket folders** like `tests/<task-id>/` or `tests/wor-N/` —
+  test files should be grouped by *concern* (unit vs integration vs
+  e2e, or by domain/feature), not by which ticket added them.
+- Multiple ACs commonly share a test file. That's fine — one file
+  covering several ACs is the normal shape. The contract author
+  decides whether to split tests across files; the test author
+  follows whatever you specify.
 
 **PHASE_2_CHECKPOINT:**
 - [ ] Every file the work touches is named with its full path and role.
@@ -211,7 +238,9 @@ non_goals:
 tested_by:
   - ac: "<AC line>"
     layer: unit | e2e | both
-    file: <path of the test file that covers it>
+    file: <path of the test file that covers it — must match the
+           project's existing test directory convention discovered in
+           Phase 1; never use per-ticket folders like tests/<task-id>/>
     reason: "<only required when layer is e2e-only — explain why unit can't cover it>"
 ---
 
