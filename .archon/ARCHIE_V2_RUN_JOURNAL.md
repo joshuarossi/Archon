@@ -987,4 +987,143 @@ After PR #20 merges: pull main, delete the local branch, strip the
 label from WOR-95, transition WOR-95 → SfD, and watch the full
 chain run hands-off.
 
+---
+
+## Thursday, May 14 2026 · 3:00 AM CDT — Plumbing bugs from the third run, and the contract I was getting wrong
+
+The third WOR-95 run (`557cd9cc`) proved the prompt fixes from
+PR #21 worked. Test-gen produced tests with **zero
+`@ts-expect-error` directives**. The new validator approved them
+cleanly (`passed: true`, `escape_hatches_found: 0`, the only tsc
+error was `TS2307` on the contract-promised `convex/schema.ts`,
+correctly classified as expected red-state). The reviewer
+approved them with `typescript_escape_hatches: []`.
+
+Then the run failed anyway, at `verify-tests-exist`, because of
+three plumbing bugs orthogonal to the prompt work. Worth
+recording both the bugs and **the larger framing I had wrong**
+about how bash nodes communicate.
+
+### What I got wrong: the bash-node output contract
+
+I drifted into a "stderr/stdout Unix discipline" framing — fix
+narration vs structured-data by routing them to different
+streams. That's a real principle but it's not the **Archon
+contract** for bash nodes. Re-read the docs
+(`guides/authoring-workflows.md`):
+
+- A bash node's **stdout is captured as `$nodeId.output`** —
+  trimmed, then either returned whole or `JSON.parse`d when
+  downstream `when:` clauses access `.field`.
+- Bash nodes don't have `output_format` (that's for AI nodes).
+- So **a bash node that wants to be queryable by `when:` must
+  emit clean JSON on stdout**, no narration mixed in.
+
+But that's only the **state channel.** Bash nodes also commonly
+need to produce **information artifacts** (reports, plans,
+files) — and those go via `writeFile` to `$ARTIFACTS_DIR/...`,
+not via stdout redirection by the YAML.
+
+Two distinct channels, two distinct mechanisms:
+
+| Channel | Mechanism | When to use |
+|---|---|---|
+| **state** | print clean JSON to stdout | when downstream `when:` or `$node.output.field` substitution needs the value |
+| **information** | `writeFile` to `$ARTIFACTS_DIR/<name>.json` | when downstream nodes read the file directly by known path (reports, contracts, plans, attachments) |
+
+Both can coexist in the same script: write a full report to
+ARTIFACTS_DIR (information), then emit a small JSON status object
+to stdout (state).
+
+The legacy pattern I was working around — script prints narration
++ JSON to stdout, YAML uses `> tmp.json && tail -1` to extract
+the JSON — was wrong on both sides. The script should have
+`writeFile`d its report directly; stdout should have been just
+the state JSON. The `tail -1` shim was a symptom of having
+collapsed two different communication channels into one stream.
+
+### Three bugs that surfaced
+
+**Bug 1: stale artifact filename in `verify-tests-exist`.**
+PR #20 renamed the test-gen quality report from
+`test-gen-quality-report.json` to `test-gen-validate-report.json`
+(the new contract-aware validator's output). The
+`verify-tests-exist` node still read the old name. Found nothing
+→ exited 1 with "Generated tests failed lint/typecheck quality
+gate." The actual failure mode of the third run. Same name
+also referenced in the repair-quality prompt (three places).
+
+**Bug 2: collapsed channels.** Both
+`task-verify-tests-exist.ts` and `task-commit-push.ts`
+emitted narration AND structured JSON on stdout. The YAML node
+captured to a temp file and ran `tail -1` to extract the JSON.
+Fragile on multi-line JSON, truncated output, early exits,
+trailing newlines. Same pattern in `bug-pipeline.yaml`'s
+`commit-and-push` node.
+
+**Bug 3: validator overwrites its own iteration-1 report.**
+When `validate-generated-tests-1` reports `passed: false`,
+`repair-generated-tests` fires, then `validate-generated-tests-2`
+runs the same script and overwrites the same file. After a
+successful repair the original failure detail is gone — no
+retro-diagnosis possible.
+
+### Fixes (this PR)
+
+- **Filename** consistency. `verify-tests-exist` reads
+  `test-gen-validate-report.json`. Repair-quality prompt
+  updated to the new name (three places).
+- **Channel separation** done right per the Archon contract.
+  Both scripts now `writeFile` their full report to
+  `$ARTIFACTS_DIR` (information), then `process.stdout.write` a
+  small JSON status object (state). YAML nodes drop the `>` and
+  `tail -1` shim; they just run the script. Same fix applied to
+  `bug-pipeline.yaml`'s `commit-and-push` node.
+- **Validator iteration preservation.**
+  `validate-generated-tests-2` copies the existing report aside
+  as `test-gen-validate-report.attempt-1.json` before re-running.
+  Matches the `feedback.attempt-N.json` pattern in
+  `task-implement`.
+
+### Meta-lesson
+
+Two passes of the same class of error in this run alone, now
+crystallized:
+
+> **When changing an artifact contract or output convention,
+> sweep all consumers.** Bug 1 was renaming a file without
+> updating its readers. Bug 2 was wrapping a script in YAML
+> redirect-plumbing rather than fixing the script to follow the
+> right channel convention. Both were "fixed half the system,
+> left the other half referencing the old shape."
+
+This is the same pattern as last entry's "fix the upstream
+emitter, not just the downstream catcher." Same family: when
+fixing, find every place in the pipeline that touches the
+contract you're changing — producer, consumer, doc reference,
+prompt instruction — and update them all together. Otherwise
+the system has two configurations of itself live simultaneously
+and the surface that fails will be wherever the contract
+mismatch happens to first matter.
+
+### Also worth noting on the record
+
+The third run **proved the upstream prompts work.** The agent
+did not emit `@ts-expect-error`. The reviewer correctly
+populated `typescript_escape_hatches: []`. The validator
+correctly classified the natural `TS2307` import error as
+expected red-state. The structural fix from PR #21 worked
+exactly as designed. The failure was purely in node-to-node
+plumbing — not in the agent's behavior or the validators' logic.
+
+After these fixes, the fourth attempt should reach merge.
+
+### State
+
+- All three plumbing fixes implemented per the Archon
+  authoring-workflows contract.
+- WOR-95 reset earlier (failed run abandoned, worktree removed,
+  ticket back to Backlog with `archon-blocked-pending`).
+- `bun run validate` pending.
+
 

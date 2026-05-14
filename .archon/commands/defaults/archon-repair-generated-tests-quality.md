@@ -1,11 +1,11 @@
 ---
 description: Repair generated tests for lint/typecheck quality (mechanical issues like ESLint warnings, TS errors). Different concern from semantic review repairs.
-argument-hint: (none - reads test-gen-quality-report.json from $ARTIFACTS_DIR)
+argument-hint: (none - reads test-gen-validate-report.json from $ARTIFACTS_DIR)
 ---
 
 # Repair Generated Tests
 
-**Input**: `$ARTIFACTS_DIR/test-gen-quality-report.json`
+**Input**: `$ARTIFACTS_DIR/test-gen-validate-report.json`
 
 ---
 
@@ -24,7 +24,7 @@ Read:
   imports pointing at the contract's file paths and tests
   instantiating the contract's signatures.
 - `$ARTIFACTS_DIR/task-context.md`
-- `$ARTIFACTS_DIR/test-gen-quality-report.json`
+- `$ARTIFACTS_DIR/test-gen-validate-report.json`
 - `$ARTIFACTS_DIR/test-gen-lint.log` if lint failed
 - `$ARTIFACTS_DIR/test-gen-typecheck.log` if typecheck failed
 - The generated test files and test configuration files

@@ -263,12 +263,14 @@ nodes:
   - id: commit-and-push
     depends_on: [ validate-tests-fail-on-bug ]
     bash: |
+      # Stage test-shaped files, commit, push to origin.
+      # The script writes commit-push-report.json to ARTIFACTS_DIR
+      # itself (information channel) and emits a small JSON state
+      # object on stdout (passed/branch/sha/files_committed) that
+      # becomes this node's $commit-and-push.output.
       set -euo pipefail
       export ARTIFACTS_DIR="$ARTIFACTS_DIR"
-      bun /home/user/Archon/.archon/scripts/task-commit-push.ts > "$ARTIFACTS_DIR/commit-push-stdout.tmp"
-      cat "$ARTIFACTS_DIR/commit-push-stdout.tmp"
-      tail -1 "$ARTIFACTS_DIR/commit-push-stdout.tmp" > "$ARTIFACTS_DIR/commit-push-report.json"
-      rm "$ARTIFACTS_DIR/commit-push-stdout.tmp"
+      bun /home/user/Archon/.archon/scripts/task-commit-push.ts
 
   - id: transition-to-in-progress
     depends_on: [ commit-and-push ]

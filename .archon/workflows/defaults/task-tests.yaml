@@ -281,17 +281,34 @@ nodes:
     depends_on: [ validate-generated-tests-1, validate-generated-tests-2 ]
     trigger_rule: all_done
     bash: |
-      # Do not hand off tests that break lint/typecheck. The implementation
-      # workflow is intentionally not allowed to repair generated tests.
+      # Do not hand off tests that fail validation or AC review. The
+      # implementation workflow is intentionally not allowed to repair
+      # generated tests, so we halt here if either quality gate is
+      # failing.
+      #
+      # Per Archon's authoring-workflows contract (see
+      # docs/guides/authoring-workflows.md):
+      #   - state (pass/fail, status fields) → stdout as JSON, captured
+      #     as $node.output for `when:` and substitution
+      #   - information (reports, files, artifacts) → $ARTIFACTS_DIR
+      #
+      # This node reads the validator + review reports (written by
+      # upstream nodes to ARTIFACTS_DIR), halts if either failed, then
+      # invokes task-verify-tests-exist.ts which writes its own
+      # information artifact and emits state JSON on stdout.
       set -euo pipefail
-      quality_report="$ARTIFACTS_DIR/test-gen-quality-report.json"
-      quality_passed="$(bun -e '
+
+      # Validator report (test-gen-validate.ts writes
+      # test-gen-validate-report.json). The legacy
+      # test-gen-quality-report.json no longer exists.
+      validate_report="$ARTIFACTS_DIR/test-gen-validate-report.json"
+      validate_passed="$(bun -e '
         import { readFileSync } from "node:fs";
         const report = JSON.parse(readFileSync(process.argv[1], "utf8"));
         process.stdout.write(report.passed === true ? "true" : "false");
-      ' -- "$quality_report" 2>/dev/null || echo false)"
-      if [ "$quality_passed" != "true" ]; then
-        echo "Generated tests failed lint/typecheck quality gate. See $quality_report."
+      ' -- "$validate_report" 2>/dev/null || echo false)"
+      if [ "$validate_passed" != "true" ]; then
+        echo "Generated tests failed test-gen validation. See $validate_report." >&2
         exit 1
       fi
 
@@ -301,29 +318,27 @@ nodes:
         process.stdout.write(report.passed === true ? "true" : "false");
       ' -- "$ARTIFACTS_DIR/test-review.json" 2>/dev/null || echo false)"
       if [ "$review_passed" != "true" ]; then
-        echo "Generated tests failed acceptance-criteria review. See $ARTIFACTS_DIR/test-review.json."
+        echo "Generated tests failed acceptance-criteria review. See $ARTIFACTS_DIR/test-review.json." >&2
         exit 1
       fi
 
-      # Halt if the test-gen agent didn't actually write any test files.
-      export ARTIFACTS_DIR="$ARTIFACTS_DIR"
-      bun /home/user/Archon/.archon/scripts/task-verify-tests-exist.ts > "$ARTIFACTS_DIR/test-files-report.json.tmp"
-      # The script writes the JSON to stdout PRECEDED by narration on stdout.
-      # Extract just the final line as the report.
-      tail -1 "$ARTIFACTS_DIR/test-files-report.json.tmp" > "$ARTIFACTS_DIR/test-files-report.json"
-      rm "$ARTIFACTS_DIR/test-files-report.json.tmp"
-      cat "$ARTIFACTS_DIR/test-files-report.json"
+      # The script writes test-files-report.json to ARTIFACTS_DIR
+      # itself (information channel) and emits a small JSON state
+      # object on stdout (passed/test_file_count/report) that becomes
+      # this node's $verify-tests-exist.output.
+      bun /home/user/Archon/.archon/scripts/task-verify-tests-exist.ts
 
   - id: commit-and-push
     depends_on: [ verify-tests-exist ]
     bash: |
       # Stage test-shaped files, commit, push to origin.
+      # The script writes commit-push-report.json to ARTIFACTS_DIR
+      # itself (information channel) and emits a small JSON state
+      # object on stdout (passed/branch/sha/files_committed) that
+      # becomes this node's $commit-and-push.output.
       set -euo pipefail
       export ARTIFACTS_DIR="$ARTIFACTS_DIR"
-      bun /home/user/Archon/.archon/scripts/task-commit-push.ts > "$ARTIFACTS_DIR/commit-push-stdout.tmp"
-      cat "$ARTIFACTS_DIR/commit-push-stdout.tmp"
-      tail -1 "$ARTIFACTS_DIR/commit-push-stdout.tmp" > "$ARTIFACTS_DIR/commit-push-report.json"
-      rm "$ARTIFACTS_DIR/commit-push-stdout.tmp"
+      bun /home/user/Archon/.archon/scripts/task-commit-push.ts
 
   - id: transition-to-in-progress
     depends_on: [ commit-and-push ]

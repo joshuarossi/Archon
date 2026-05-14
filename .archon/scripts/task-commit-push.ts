@@ -22,9 +22,20 @@
  *   $ARTIFACTS_DIR/trigger-payload.json — for issue_key in commit message
  *   $ARTIFACTS_DIR/task.raw.json — for ticket summary in commit message
  *
- * stdout: { committed, pushed, sha, files }
+ * Two output channels (per Archon's authoring-workflows contract):
+ *
+ *   INFORMATION channel — writes the full report to
+ *     `$ARTIFACTS_DIR/commit-push-report.json` for any downstream node
+ *     that needs the branch / sha / files list.
+ *
+ *   STATE channel — emits a small JSON object on stdout for `when:`
+ *     condition evaluation via `$node.output.field`. Bash-node runtime
+ *     captures stdout as `nodeOutput.output` and parses it as JSON
+ *     when conditional substitution requests a `.field`.
+ *
+ * Narration → stderr (keeps stdout clean for the state channel).
  */
-import { readFile, rm } from 'node:fs/promises';
+import { readFile, rm, writeFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
@@ -127,13 +138,25 @@ console.log(`Pushing ${branch} to origin (-u to set upstream)...`);
 await git('push', '-u', 'origin', branch);
 console.log('Pushed.');
 
+// INFORMATION channel: full report file in $ARTIFACTS_DIR.
+const reportPath = `${artifactsDir}/commit-push-report.json`;
+const report = {
+  committed: true,
+  pushed: true,
+  branch,
+  sha,
+  files: toStage.map(c => c.path),
+};
+await writeFile(reportPath, JSON.stringify(report, null, 2));
+console.error(`Wrote ${reportPath}`);
+
+// STATE channel: small JSON Archon captures as $node.output.
 process.stdout.write(
-  '\n' +
-    JSON.stringify({
-      committed: true,
-      pushed: true,
-      branch,
-      sha,
-      files: toStage.map(c => c.path),
-    })
+  JSON.stringify({
+    passed: true,
+    branch,
+    sha,
+    files_committed: toStage.length,
+    report: reportPath,
+  })
 );
