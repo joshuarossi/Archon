@@ -130,10 +130,34 @@ a flushing wrapper.
 
 **(d) `__stubs__/X.ts` files are a smell.**
 The contract names the file paths the dev agent will create. Test
-imports should target those paths directly with a narrow
-task-labeled `@ts-expect-error`. If a stub file exists, flag it
-as a `required_repair`: the test should import from the
-contracted path and accept module-not-found as the red state.
+imports should target those paths directly. The validator
+distinguishes expected red-state errors (e.g. `TS2307 Cannot find
+module` on a contract-promised path) from real test-code defects,
+so there is no need for the test author to suppress imports. If a
+stub file exists, flag it as a `required_repair`: the test should
+import from the contracted path and accept module-not-found as the
+red state — let the validator handle the classification.
+
+**(e) TypeScript escape hatches are an automatic fail.**
+The following patterns make `tsc` blind to real bugs in test code
+and are forbidden in every test file:
+
+- `@ts-expect-error` (any directive scope — line, file, or block)
+- `@ts-ignore`
+- `@ts-nocheck`
+- Explicit `any` type annotations
+- `as any` casts
+- `as unknown` casts
+
+Treat any occurrence of these as a `required_repair` with severity
+`hard_fail`. The validator will reject them mechanically too — the
+review-time check is to catch them early and explain to the test
+author why they're not acceptable. The argument the test author
+sometimes makes ("but the import doesn't exist yet, so I have to
+suppress it") is wrong: the validator accepts expected red-state
+errors based on the contract, so unsuppressed imports are exactly
+right. Test authors should write tests as if they were green-state
+tests; the validator handles the rest.
 
 ### What to write into the review
 
@@ -159,6 +183,8 @@ or unflushed-timer issue exists.
 - [ ] Every fake-timer-advance is wrapped in `act()` or followed
       by `waitFor()`
 - [ ] No `__stubs__/X.ts` files exist; tests import from contracted paths
+- [ ] No TypeScript escape hatches in any test file (`@ts-expect-error`,
+      `@ts-ignore`, `@ts-nocheck`, explicit `any`, `as any`, `as unknown`)
 - [ ] `selector_conflicts` and `unflushed_timer_tests` populated in
       the review JSON if any issues found
 
@@ -173,9 +199,12 @@ Evaluate:
 - Are mocks limited to external services?
 - Are assertions strong enough to guide implementation?
 - Are there obvious TypeScript or ESLint problems in the generated tests?
-- Do future implementation imports use narrow task-labeled
-  `@ts-expect-error` comments so raw `TS2307` errors cannot reach
-  validation?
+- Are TypeScript escape hatches absent? (`@ts-expect-error`,
+  `@ts-ignore`, `@ts-nocheck`, explicit `any`, `as any`, `as unknown`
+  are all auto-fails — see Phase 1.5 rule (e).)
+- Do future implementation imports target the contracted paths
+  directly, without suppression? Expected `TS2307` errors at red
+  state are tolerated by the validator and should not be hidden.
 - Are any tests likely to push the implementation agent toward
   test-harness gaming, fake IDs, selectors, or fixture-specific behavior?
 - **If a prior review exists:** was each prior `required_repairs[]`
