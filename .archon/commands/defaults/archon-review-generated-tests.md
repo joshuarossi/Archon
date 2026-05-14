@@ -159,7 +159,41 @@ errors based on the contract, so unsuppressed imports are exactly
 right. Test authors should write tests as if they were green-state
 tests; the validator handles the rest.
 
-### What to write into the review
+### Mechanical scan: TypeScript escape hatches
+
+This check is **non-negotiable and must produce structured
+evidence** — not a prose claim. Run the following greps over every
+test file in the worktree (any file matching
+`*.test.ts`, `*.spec.ts`, `*.test.tsx`, `*.spec.tsx`):
+
+```bash
+grep -rnE '@ts-expect-error|@ts-ignore|@ts-nocheck' tests/ src/ e2e/ 2>/dev/null
+grep -rnE ':\s*any\b(?!\w)|:\s*any\[\]|\bas\s+any\b|\bas\s+unknown\b' tests/ src/ e2e/ 2>/dev/null
+```
+
+Every hit becomes a row in the `typescript_escape_hatches: []`
+array in the review JSON, with the shape:
+- `file` — relative path
+- `line` — 1-indexed line number
+- `pattern` — one of: `@ts-expect-error`, `@ts-ignore`,
+  `@ts-nocheck`, `explicit any`, `any[]`, `as any`, `as unknown`
+- `text` — the offending line, trimmed
+
+**This array is the proof the check was performed.** Asserting
+"no escape hatches" in the prose summary without populating this
+array (or, equivalently, populating it with an empty array
+*without* running the greps) is a process failure. If the
+worktree's test files contain any of these patterns and the array
+is empty, the reviewer has failed its job.
+
+A non-empty `typescript_escape_hatches` array means
+`passed: false` and one `required_repairs` entry per hit. The
+required-change text should always be the same: "Remove the
+suppression. Imports of contract-promised paths are tolerated by
+the validator as expected `TS2307` errors at red state — no
+suppression is needed."
+
+### What else to write into the review
 
 Add a `selector_conflicts: []` array to the review JSON. Each
 entry must name:
@@ -173,8 +207,8 @@ fake timers without `act()`/`waitFor()`.
 
 A failed Phase 1.5 sanity check is **always** a `required_repair`
 because tests with these issues will burn the dev-loop budget on
-an impossible target. Set `passed: false` if any selector conflict
-or unflushed-timer issue exists.
+an impossible target. Set `passed: false` if any selector conflict,
+unflushed-timer issue, or escape-hatch hit exists.
 
 **PHASE_1.5_CHECKPOINT:**
 - [ ] Every `getBy*` (singular) selector traced against contract output
@@ -183,10 +217,14 @@ or unflushed-timer issue exists.
 - [ ] Every fake-timer-advance is wrapped in `act()` or followed
       by `waitFor()`
 - [ ] No `__stubs__/X.ts` files exist; tests import from contracted paths
-- [ ] No TypeScript escape hatches in any test file (`@ts-expect-error`,
-      `@ts-ignore`, `@ts-nocheck`, explicit `any`, `as any`, `as unknown`)
-- [ ] `selector_conflicts` and `unflushed_timer_tests` populated in
-      the review JSON if any issues found
+- [ ] No TypeScript suppressions in any test file
+      (`@ts-expect-error`, `@ts-ignore`, `@ts-nocheck`, `: any`,
+      `any[]`, `as any`, `as unknown`) — verified by grep
+- [ ] Valid TypeScript everywhere else. The only acceptable tsc
+      errors are `TS2307` on contract-promised paths.
+- [ ] `selector_conflicts`, `unflushed_timer_tests`, and
+      `typescript_escape_hatches` populated in the review JSON
+      with every hit found
 
 ## Phase 2: REVIEW - Evaluate Test Quality
 
@@ -215,6 +253,8 @@ Evaluate:
 - [ ] Weak or misleading tests are listed
 - [ ] Mechanical test-quality risks are listed
 - [ ] Test-gaming risks are listed
+- [ ] `typescript_escape_hatches` array reflects an actual grep
+      over the test files (verified in Phase 1.5)
 - [ ] Prior repair items (if any) verified as fixed or surfaced as
       still-broken
 
@@ -233,13 +273,15 @@ prior version) as valid JSON with this shape:
   "gaming_risks": [],
   "selector_conflicts": [],
   "unflushed_timer_tests": [],
+  "typescript_escape_hatches": [],
   "required_repairs": []
 }
 ```
 
 Set `"passed": false` if any required repair remains, including any
-`selector_conflicts` or `unflushed_timer_tests` entries from
-Phase 1.5 — those will burn the dev-loop budget if not fixed first.
+`selector_conflicts`, `unflushed_timer_tests`, or
+`typescript_escape_hatches` entries from Phase 1.5 — those will
+burn the dev-loop budget if not fixed first.
 
 Each item in `required_repairs` must include:
 - `file`
@@ -247,11 +289,24 @@ Each item in `required_repairs` must include:
 - `required_change`
 - `acceptance_criterion`
 
+Each item in `typescript_escape_hatches` must include:
+- `file` — relative path
+- `line` — 1-indexed
+- `pattern` — one of: `@ts-expect-error`, `@ts-ignore`,
+  `@ts-nocheck`, `explicit any`, `any[]`, `as any`, `as unknown`
+- `text` — the offending line, trimmed
+
 ## Success Criteria
 
 - **ARTIFACT_WRITTEN**: `$ARTIFACTS_DIR/test-review-latest.json` exists
-  and is valid JSON.
+  and is valid JSON with all required top-level fields including
+  `typescript_escape_hatches`.
 - **AC_REVIEWED**: Every acceptance criterion was checked.
+- **ESCAPE_HATCH_SCAN_PERFORMED**: The grep commands in Phase 1.5
+  were actually executed against the worktree. The
+  `typescript_escape_hatches` array contains every hit, with
+  file:line:pattern:text fields populated. An empty array means
+  the greps returned no matches — not that the check was skipped.
 - **PRIOR_REPAIRS_VERIFIED**: If a prior verdict existed, every prior
   `required_repairs[]` was checked as fixed or re-flagged as still
   broken.

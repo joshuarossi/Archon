@@ -537,7 +537,454 @@ contract that names `not-yet-exists.ts`. Result: `passed: false`,
 `escape_hatches_found: 3`, each correctly identified with file:line
 and pattern name. Exactly what we want.
 
-Full `bun run validate` running now. If it's green, this is the
-moment to commit and PR.
+`bun run validate` came back green. Committed as
+`feat(test-gen): contract-aware validator forbids TS escape hatches`,
+pushed as branch `feat/contract-aware-test-gen-validator`, opened
+PR #20.
+
+---
+
+## Thursday, May 14 2026 · 1:38 AM CDT — Guiding principles, said out loud
+
+Two framing ideas Josh articulated that are worth preserving here as
+durable principles for the remainder of the v2 test:
+
+**1. The goal isn't to produce code; the goal is to prove the system
+operates without intervention.**
+
+The first WOR-95 run produced a correct Convex schema (11 tables,
+all fields, 135/135 tests passing). By the "did we get code"
+standard, it succeeded. But the pipeline got stuck after the dev
+loop — PR open, ticket In Progress, workflow ended without merging.
+We resolved it by hand. **That makes the run a failure regardless
+of code quality.** The standard isn't "did Archie write good code
+this time" — it's "can a future project go from Epic → Done with
+zero operator intervention." The schema is incidental; the
+hands-off success is the actual deliverable.
+
+This is the same logic as "test fixes by re-running the failing
+test, not by reasoning that it should now pass." Watching the
+system work correctly is the only evidence the system works
+correctly. Re-firing WOR-95 from scratch (after merging PR #20) is
+the only way to prove the validator fix actually unblocks the
+pipeline — not a proof we can construct on paper.
+
+**2. One ticket at a time, deliberately, because we're validating
+the automation — not chasing output.**
+
+We don't care about throughput. We care about whether the
+automation actually works. If we unblocked all five root tickets at
+once and three of them stuck for three different reasons, we'd
+have a tangled multi-failure to debug instead of three clean
+attributable signals. **Each ticket is its own controlled
+experiment.** Single-stepping is what lets us cleanly attribute
+"this fix unblocked WOR-95" or "this new failure mode appeared at
+WOR-100" or "the pipeline ran hands-off through WOR-X."
+
+The PROMOTE_CAP=1 in `jira-task-done.ts` is the system-level
+enforcement: even unattended, exactly one newly-unblocked ticket
+gets promoted per Done event. But during validation we go further:
+keep the `archon-blocked-pending` label on every non-current
+ticket so the sweep finds zero candidates, and manually release the
+single ticket we're studying.
+
+We relax this only once we've watched the pipeline succeed
+end-to-end without intervention on enough tickets to characterize
+the failure modes. Until then, single-stepping is the discipline.
+
+**3. Prefer "halt cleanly when uncertain" over "merge anyway."**
+
+The pipeline has two failure modes:
+
+- **Stuck-but-correct.** A validator catches a real problem, the
+  workflow halts, the PR stays open. The operator can inspect,
+  diagnose, fix the root cause.
+- **Unstuck-but-wrong.** A validator misses a problem, the workflow
+  merges a PR it shouldn't have. We get throughput at the cost of
+  correctness.
+
+The first WOR-95 run was actually mode (1): the post-fix-validation
+typecheck refused to merge code with real type errors. The system
+was doing exactly the right thing. We rescued it manually because
+we wanted to *understand* the failure, but if we'd left it alone,
+it was already correct in its refusal.
+
+**Mode (1) is acceptable forever. Mode (2) is never acceptable.**
+
+Concretely:
+
+- A stuck ticket waiting for an operator: fine. The operator looks
+  at it, sees what halted, decides. No harm done.
+- A merged PR with bad code: not fine. The badness has now landed
+  on main, possibly broken downstream tickets that build on it,
+  and is harder to unwind than the alternative.
+
+So bias the system toward strictness. The validators we built —
+the test-gen escape-hatch scanner, the contract-aware typecheck
+classifier, the merge-pr `when:` conditions, the file-protection
+hook during implementation — should be **slightly too strict**
+rather than slightly too loose. If they reject too often, the
+agents have to write better code. That's a learning loop, not a
+bug. If they ever fail to reject something they should have, the
+cost is much higher than a few extra stuck tickets along the way.
+
+The autonomous-throughput goal is *aspirational*, not the current
+bar. Until the pipeline is trusted, "halts correctly when
+something's wrong" is the bar we're optimizing for.
+
+---
+
+## Thursday, May 14 2026 · 1:49 AM CDT — `task-tests` could be an adversarial loop; `task-implement` can't
+
+Reconsidering the loop-vs-DAG tradeoff with a correction.
+
+The cage **only applies during `task-implement`**, where the dev
+agent must not edit the tests (otherwise the perverse "delete the
+test to make it pass" incentive kicks in). During `task-tests`,
+the agent IS the test author and IS supposed to mutate the tests
+as it generates and repairs them. **No cage needed in `task-tests`.**
+
+That changes the structural picture. The "loops can't use hooks"
+limitation only blocks adversarial-loop refactor of
+`task-implement`. **For `task-tests`, we could legitimately switch
+to a single adversarial-loop node right now** with `max_iterations:
+10` (or however many is right), and we'd get:
+
+- One node, one prompt, role-branched on phase (generate / review /
+  repair / validate).
+- Iterate until convergence or cap. No more 2-round ceiling.
+- Cleaner DAG: `prepare-branch → adversarial-test-gen → commit-and-push → transition-to-in-progress`.
+
+The blockers for `task-implement` remain — cage is a hook, loop
+primitive doesn't support hooks, ergo task-implement stays as the
+explicit 5-attempt DAG until the engine grows hook-in-loop support.
+
+Worth holding off on the `task-tests` refactor until we've seen
+this WOR-95 run play out under the existing DAG. If the new
+contract-aware validator converges in 1 round (as expected for a
+clean ticket), the cap doesn't matter and the refactor is
+optimization-without-evidence. If the validator surfaces something
+the current 2-round repair flow can't handle, that's the
+motivation to do the loop refactor next.
+
+The original `(1)+(2)+(3)` framing still holds for `task-implement`,
+where lifting the engine limitation is the only path to clean.
+Logged as a v3 engine candidate.
+
+---
+
+## Thursday, May 14 2026 · 1:50 AM CDT — The pipeline is generic; project-specific concerns live in the spec
+
+Important correction to an earlier framing. I had started writing a
+"beta-functional vs production-perfect" rubric table with rows like
+"no cross-party data leakage — required" — putting Clarity-specific
+invariants into the generic reviewer rubric.
+
+**This is a structural error.** The Archie pipeline is the
+SDLC engine. It runs against *any* project. It must never reference
+"Clarity," or "privacy," or "subscriptions," or anything specific
+to a particular product. The reviewer rubric in
+`archon-review-generated-tests.md` and the validators in
+`task-implement` are generic SDLC discipline:
+
+- Does each AC have meaningful coverage?
+- Are assertions strong enough to drive implementation honestly?
+- Are tests written to fail for missing product behavior, not for
+  malformed test code?
+- Are there gaming patterns the implementer could exploit?
+- Are tests realistic (using real harnesses where available, not
+  mocking the runtime)?
+
+The project-specific concerns flow in through a different path:
+
+1. Project authors a PRD / TechSpec / DesignDoc and attaches them
+   to the Epic.
+2. `epic-decompose` reads the spec, produces a plan with
+   surface-aligned tickets that carry the spec's invariants as
+   acceptance criteria. ("Coach AI never quotes the other party's
+   raw private input" is an AC on the relevant ticket, derived
+   from TechSpec §6.)
+3. `task-tests` reads the per-ticket ACs and authors tests that
+   *enforce* those invariants — for example, a test that calls
+   the Coach with private content and asserts the output doesn't
+   contain a verbatim string from the other party.
+4. `task-implement` writes code that makes those tests pass.
+5. `task-merge-pr` won't merge a PR whose tests don't all pass.
+
+**The privacy invariant gets enforced at the test-runner level, not
+at the reviewer-rubric level.** The pipeline doesn't need to know
+what privacy means for Clarity. It just needs to faithfully
+execute the spec → AC → test → implementation chain. Each project
+gets its own discipline by virtue of its own spec.
+
+So the calibration question is **about generic SDLC quality**, not
+about project-specific invariants:
+
+- How strict should the reviewer be about test coverage of edge
+  cases vs only happy paths? (Beta: happy paths + the two or three
+  most-likely-to-break edge cases. Production: every edge case.)
+- How strict about comment quality, naming, doc completeness?
+  (Beta: minimal. Production: high.)
+- How strict about polish-level findings (empty/loading/error
+  states implementation, copy quality)? (Beta: not enforced.
+  Production: enforced.)
+- How aggressive about flagging "this could be more idiomatic"?
+  (Beta: don't flag. Production: maybe flag as suggestions, not
+  required_repair.)
+
+These are tuning knobs on the generic rubric, and they apply the
+same way whether the downstream project is Clarity or a
+hypothetical SaaS or a CLI tool. The right framing: **the rubric
+should care about engineering quality at a beta-appropriate
+level, while the spec carries every project-specific invariant
+through to the tests.**
+
+Implication for Principle 3 ("halt cleanly when uncertain"): the
+"correctness" being protected is *spec-derived correctness*
+(ACs failing, contracts violated, tests broken), not generic
+"engineering perfection." A pipeline that halts because a test
+fails is doing the right thing. A pipeline that halts because the
+reviewer thinks a variable name could be clearer is being too
+precious for the bar.
+
+---
+
+## Thursday, May 14 2026 · 1:57 AM CDT — Second WOR-95 run halted at the validator gate (system working correctly)
+
+The second autonomous WOR-95 run kicked off after PR #20 merged.
+`task-tests` ran through:
+
+- Setup nodes ✓
+- create-contract → verify-contract-exists ✓
+- generate-tests ✓ — but agent wrote `// @ts-expect-error` at the
+  top of `schema.test.ts` (twice this time — once for the schema
+  import, once for the dataModel types import). **Same habit as the
+  first run.**
+- review-1 → repair → review-2 → parse-final ✓
+- validate-generated-tests-1: **failed** —
+  `test-gen-validate-report.json` reports
+  `escape_hatches_found: 2`, both `@ts-expect-error` on lines 2
+  and 4 of `schema.test.ts`. Validator correctly refused to pass.
+- repair-generated-tests → validate-generated-tests-2: presumably
+  still failed (the agent didn't remove the hatches in the repair
+  pass either).
+- verify-tests-exist: failed → halted the workflow.
+
+WOR-95 status: still **Selected for Development**. No
+task-implement dispatched. **Pipeline correctly halted at the
+gate.** Principle 3 in action: stuck-but-correct, not
+unstuck-but-wrong.
+
+This is the system working exactly as designed.
+
+### What needs fixing
+
+Two failures, layered:
+
+**(a) The test-gen agent keeps writing `@ts-expect-error`.**
+This is its trained habit. The prompt change in PR #20 told it
+"don't" but the trained tendency is strong. A prompt change alone
+isn't a hard guardrail — the agent will revert to the pattern when
+under pressure (red-state import errors look scary; suppression
+looks like the obvious fix).
+
+**(b) The test-reviewer is not actually checking.**
+This is the worse failure. The reviewer's summary text literally
+says "No TypeScript escape hatches, no stub files, no selector
+conflicts." But the file has two `@ts-expect-error` directives on
+lines 2 and 4 — visible to anyone who reads the file. The
+reviewer hallucinated a verification it didn't perform.
+
+Why did the reviewer get away with this? Look at the review JSON
+shape:
+
+  passed, summary, coverage_gaps, weak_tests, lint_typecheck_risks,
+  gaming_risks, selector_conflicts, unflushed_timer_tests,
+  required_repairs
+
+`selector_conflicts` and `unflushed_timer_tests` are
+**structured-evidence arrays** the reviewer must populate with
+specific file:line:rationale entries if hits exist. The Phase 1.5
+prompt has dedicated checks for those.
+
+There is **no structured-evidence array for escape hatches.** The
+new rule landed as a checkbox in the PHASE_1.5_CHECKPOINT and a
+bullet in the Phase 2 evaluator — but **the agent's output schema
+doesn't have a field where it has to report each hit.** With no
+structured field to populate, the agent just doesn't check. It
+asserts "no escape hatches" in the prose summary because that
+sounds like the right thing to say.
+
+**The fix:** add a `typescript_escape_hatches: []` field to the
+required output schema. The reviewer must populate it with
+`{file, line, pattern, text}` entries for every hit found, same
+shape as `selector_conflicts`. The prompt must require this — and
+require the reviewer to grep the test files for the six patterns
+explicitly, with the regex strings written into the prompt so the
+agent can't just eyeball.
+
+Then the reviewer will catch (a) before the validator does. Today
+the validator is the safety net, and it caught the slip
+correctly — but every safety net catch is a sign of an earlier
+gate that should have caught it.
+
+### Decision
+
+Make two more prompt-level changes to `archon-review-generated-tests.md`:
+
+1. Add `typescript_escape_hatches: []` to the required output
+   shape, with the same structured-evidence convention as
+   `selector_conflicts` (each entry: file, line, pattern, text).
+2. Add an explicit Phase 1.5 sub-check that runs the regex grep
+   for the six patterns over every test file, with the regexes
+   written into the prompt. The reviewer can't claim "no hatches"
+   without populating that field.
+
+Also worth doing: **strengthen the test-gen prompt** to make it
+say "don't write `@ts-expect-error` — the validator accepts
+TS2307 on contract-promised paths as expected red-state errors,
+so unsuppressed imports are correct." The agent's habit comes from
+treating import errors as "scary" — explicit prompt language that
+the imports are fine should reduce the urge.
+
+For now: leave WOR-95 in its halted state. Don't rescue it. Make
+the prompt changes, then re-fire from clean.
+
+---
+
+## Thursday, May 14 2026 · 2:08 AM CDT — The bigger mistake: I had only fixed the reviewer
+
+While drafting the fix to the reviewer prompt, Josh pointed out
+that I'd missed the most important thing: **the test-gen prompt
+itself was actively instructing the agent to use `@ts-expect-error`.**
+PR #20 only updated the reviewer; the generator prompt still said
+verbatim "place a narrow `@ts-expect-error` directly above that
+import" with code examples. The agent was just doing what its
+prompt told it to.
+
+This was a worse error than the missing structured-evidence field
+in the reviewer. The reviewer is the *safety net* — the generator
+is where the behavior comes from. Fixing only the safety net while
+leaving the source unchanged is amplifying our own failure mode:
+the agent will keep emitting suppressions, the reviewer keeps
+catching them (eventually, when it's properly structured), and the
+validator keeps rejecting. We're paying the cost of the loop on
+every run.
+
+Going through all four test-related prompts to find every place
+that endorses the patterns:
+
+- `archon-generate-tests.md` — five places explicitly told the
+  agent to write `@ts-expect-error` directives.
+- `archon-review-generated-tests.md` — already partially updated
+  in PR #20, but needed the structured-evidence field.
+- `archon-repair-tests-from-review.md` — one place told the
+  reviewer-driven repair agent to use `@ts-expect-error`.
+- `archon-repair-generated-tests-quality.md` — five places
+  instructed the validator-driven repair agent to use suppressions
+  to "make tsc pass."
+
+All four prompts had to be rewritten coherently. The framing shift
+that closed the loop: **`tsc --noEmit` is NOT expected to pass at
+red state**, because the contract-promised modules don't exist
+yet. The whole "make tsc pass" instruction was creating tension
+that the agent resolved by reaching for suppressions. Once you
+remove the requirement that tsc pass, you remove the pressure to
+suppress.
+
+The new uniform discipline across all four prompts:
+
+- Lint must pass.
+- `tsc` is **not expected to pass** at red state. The only
+  acceptable tsc errors are `TS2307 "Cannot find module"` on paths
+  the contract promises will be created.
+- Any other tsc error is a real test-code bug; fix the test code,
+  don't suppress.
+- **Never** use `@ts-expect-error`, `@ts-ignore`, `@ts-nocheck`,
+  `: any`, `any[]`, `as any`, `as unknown` — absolute hard-fails
+  enforced by both reviewer (structured-evidence array) and
+  validator (mechanical grep).
+
+The atomic checkpoint items every prompt now has, in its relevant
+phase, are exactly two lines:
+
+```
+- [ ] No TypeScript suppressions in any test file
+      (@ts-expect-error, @ts-ignore, @ts-nocheck, : any, any[],
+      as any, as unknown)
+- [ ] Valid TypeScript everywhere else. The only acceptable tsc
+      errors are TS2307 on contract-promised paths.
+```
+
+Terse, specific, verifiable. Each prompt's body has the reasoning;
+the checklist is the binding contract.
+
+### Meta lesson
+
+When tracking down a failure mode, **find every place in the
+pipeline that touches the broken pattern, not just the most
+visible one.** I had focused on the reviewer because it's where
+the WOR-95 stuck-state surfaced. Should have asked: "what wrote
+the directives?" The answer was: the generator was told to. Same
+mistake I had made earlier (skipping the test-gen scaffolding miss
+because it would be detected via validator failure) — fixing the
+downstream catcher while leaving the upstream emitter alone.
+
+Adding to the wrong-turns list at the end of the WOR-95 diagnosis
+entry as it becomes a pattern:
+
+> **"Fix the visible downstream symptom, leave the upstream cause
+> in place."** Twice now I've done this in this run. First with
+> the test-gen scaffolding miss (eslint.config.js not committed —
+> "the validator will catch it"). Second with the
+> `@ts-expect-error` issue (only updated the reviewer, left the
+> generator instructing the bad pattern). The pattern: fixing
+> something close to where I noticed the failure feels like
+> progress, but if I haven't fixed where the failure *originated*,
+> the system will keep producing the same shape of failure.
+>
+> The discipline: when I see a failure, trace it backward to the
+> first prompt / script / node that *generated* the offending
+> output, and fix it there. Downstream gates are safety nets;
+> they're not where the fix belongs.
+
+### State right now
+
+- All four test-related prompts rewritten with consistent
+  no-suppressions / no-tsc-pass-required framing.
+- Atomic two-line checkpoints in each prompt's relevant phase.
+- New `typescript_escape_hatches` structured-evidence field in
+  the reviewer's output schema.
+- Validator (test-gen-validate.ts from PR #20) remains the
+  mechanical backstop; no changes needed there.
+- `bun run validate` green. `check:bundled` confirms bundled is
+  up to date.
+- WOR-95 is still in Selected for Development on the failed
+  workflow run. Will need to be reset to Backlog + relabeled
+  before re-firing after this PR merges.
+
+About to commit and PR.
+
+---
+
+## State at this checkpoint
+
+- **PR #20 open**, awaiting merge. Contains the three TS-validator
+  fixes plus this journal.
+- **WOR-95 is in Backlog** with `archon-blocked-pending` re-applied.
+  All other 46 child tickets still labeled and untouched.
+- **All 4 Phase 0 tickets** Done; their outward Blocks links cleaned.
+- **The `archon/task-wor-95` branch** and **PR #1 on Clarity** are
+  deleted/closed.
+- **Worktree under `~/.archon/workspaces/joshuarossi/Clarity/worktrees/archon/task-wor-95`**
+  removed.
+- **Artifact runs preserved** under
+  `~/.archon/workspaces/joshuarossi/Clarity/artifacts/runs/`
+  (the full set: `epic-decompose` 556202f7, `task-tests` 5f143db2,
+  `task-implement` 70a38cc1). Useful for diagnosis if needed.
+
+After PR #20 merges: pull main, delete the local branch, strip the
+label from WOR-95, transition WOR-95 → SfD, and watch the full
+chain run hands-off.
 
 

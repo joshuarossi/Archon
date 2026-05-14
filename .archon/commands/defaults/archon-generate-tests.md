@@ -35,8 +35,24 @@ informative than a stub that silently passes against a placeholder
 return value. **Do not create stub files like `__stubs__/X.ts` to
 satisfy missing imports.**
 
-The tests you write must be clean TypeScript and clean ESLint. A test
-that fails because the product behavior is missing is good. A test that
+**`tsc --noEmit` is not expected to pass at red state.** The
+implementation that would resolve the imports has not been written
+yet — of course there will be `TS2307 "Cannot find module"`
+errors on contract-promised paths. That is the correct red state.
+The contract-aware validator (`test-gen-validate.ts`) parses the
+contract's `files[].path` list and tolerates exactly those errors.
+
+What we DO require: every line of test code that *can* be valid
+TypeScript MUST be valid TypeScript. Use proper types, proper
+imports, proper assertions. **Never** use any TypeScript
+escape-hatch pattern (see the absolute-hard-fail list below) to
+suppress errors — not even to make tsc "pass." If you write
+`schema.tables[dynamicName]` and that produces a type error, the
+test code itself is wrong — restructure to use a typed accessor.
+Do not paper over it.
+
+A test that fails because the product behavior is missing is good.
+A test that
 fails because of a TypeScript error, ESLint error, unused variable,
 missing import (when the contract specifies the path the
 implementation will create), invalid fixture type, or malformed
@@ -122,20 +138,57 @@ locators, and raw imports from modules that cannot be resolved by
 TypeScript.
 
 If a test must import future implementation code that does not exist yet,
-keep the test suite typecheck-clean by placing a narrow `@ts-expect-error`
-directly above that import only. The comment must name the task and explain
-that the import is the intentional red-state implementation seam, for
-example:
+**write the import normally — do not suppress the resulting error.** At
+red state, the import will produce a `TS2307 "Cannot find module"` error
+from TypeScript. That error is **expected, correct, and required** — it
+is the proof that the red state is real. The contract-aware validator
+(`test-gen-validate.ts`) reads the contract's `files[].path` list and
+classifies `TS2307` errors on contract-promised paths as expected
+red-state errors. They are tolerated by the validator. **No suppression
+is needed.**
 
 ```ts
-// @ts-expect-error WOR-123 red-state import: implementation is created by task-implement.
+// CORRECT — imports the not-yet-existing module directly.
+// The TS2307 error this produces is the expected red-state error
+// and the validator accepts it.
 import { futureFunction } from "../../src/future-module";
 ```
 
-Do not use `@ts-ignore`, broad file-level suppressions, or suppressions for
-anything other than a future implementation import. Raw `TS2307` missing
-module errors are invalid generated tests and must be repaired before
-handoff.
+### Forbidden: TypeScript escape hatches
+
+The following patterns are **absolute hard-fails** and must never
+appear in any test file you write:
+
+- `@ts-expect-error` (line, file, or block scope — any scope)
+- `@ts-ignore`
+- `@ts-nocheck`
+- Explicit `any` type annotations (`: any`)
+- `any[]` array types
+- `as any` casts
+- `as unknown` casts
+
+These are not "use sparingly with a good comment" patterns. They are
+**never acceptable in test code**, period. The reviewer scans every
+test file for these patterns with `grep` and will reject the test
+suite if any are present. The validator gate after the review also
+scans and refuses to pass.
+
+The argument "but the import doesn't exist yet, so I have to suppress
+it" is **wrong** — the validator accepts expected red-state errors
+based on the contract. Write tests as if they were green-state tests.
+Let TypeScript complain about not-yet-existing imports; the validator
+knows what's expected and accepts it.
+
+The argument "but this property is dynamically indexed" is also
+**wrong** — restructure the test to use the typed accessor pattern
+(e.g. switch from `obj[stringName]` to `(obj as Record<string, T>)[stringName]`
+if and only if the contract genuinely promises a `Record<string, T>` shape,
+or to a typed accessor function the contract names). If the test
+inherently can't be written without a cast, the test design is wrong
+and the AC needs a different approach.
+
+Raw `TS2307` errors on contract-promised paths are **valid generated
+tests at red state**. Suppression patterns are **invalid**.
 
 **PHASE_3_CHECKPOINT:**
 - [ ] Tests and config changes are limited to test-shaped files
@@ -151,27 +204,47 @@ Required checks:
 - Inspect every changed test for TypeScript and ESLint issues.
 - Run the project lint command if available after you add or confirm it.
 - Run the project typecheck command if available after you add or confirm
-  it.
+  it. Note: **tsc is NOT expected to pass at red state.** See below.
 - Run the relevant Vitest and Playwright commands if the project can run
   them locally.
 
 Expected result:
-- Lint and typecheck must pass for the tests you added.
-- The behavior tests may fail because the implementation is missing.
-  That is the desired red state.
+- **Lint must pass.**
+- **`tsc --noEmit` will fail at red state** because contract-promised
+  modules do not exist yet. That is correct and expected. The
+  validator (`test-gen-validate.ts`) reads the contract and
+  tolerates `TS2307 "Cannot find module"` errors on those paths.
+  Do **not** try to make tsc pass. Do **not** add any suppression
+  pattern.
+- **Any tsc error that is NOT `TS2307` on a contract-promised
+  path is a real test-code defect.** Fix the test.
+- The behavior tests may fail at runtime because the implementation
+  is missing. That is the desired red state.
 - Do not make tests pass by weakening assertions, mocking the system
   under test, or changing implementation source.
 
-If lint/typecheck fails because of your tests, fix the tests before
-finishing. If lint/typecheck fails only because of unrelated pre-existing
-source errors, report that distinction clearly.
+If lint fails because of your tests, fix the tests before finishing.
+If tsc produces errors other than `TS2307` on contract-promised
+paths, fix the tests. If lint/typecheck fails only because of
+unrelated pre-existing source errors, report that distinction
+clearly.
+
+**Never** add any TypeScript escape-hatch pattern (`@ts-expect-error`,
+`@ts-ignore`, `@ts-nocheck`, `: any`, `any[]`, `as any`, `as unknown`)
+to suppress errors. The validator scans for these patterns and will
+reject the test suite if any are present, regardless of whether tsc
+"passes." Write tests as if they were normal green-state tests; let
+TypeScript complain about not-yet-existing imports.
 
 **PHASE_4_CHECKPOINT:**
 - [ ] Generated tests have no ESLint errors
-- [ ] Generated tests have no TypeScript errors. Future implementation
-  imports, if required, use a narrow task-labeled `@ts-expect-error`.
+- [ ] No TypeScript suppressions in any test file
+      (`@ts-expect-error`, `@ts-ignore`, `@ts-nocheck`, `: any`,
+      `any[]`, `as any`, `as unknown`)
+- [ ] Valid TypeScript everywhere else. The only acceptable tsc
+      errors are `TS2307` on contract-promised paths.
 - [ ] Behavior failures are due to missing implementation, not broken
-  test code
+      test code
 - [ ] Any unrelated pre-existing failures are identified separately
 
 ## Phase 5: REPORT - Summarize Coverage
@@ -194,8 +267,16 @@ Output a concise final status:
 - No test-harness gaming. Do not encode assumptions solely from likely
   validation mechanics, generated selectors, fake IDs, or fixture names.
 - No dirty test quality. Do not leave unused variables, unused imports,
-  TypeScript errors, ESLint errors, invalid async handling, or invalid
-  Playwright/Vitest API usage.
+  unexpected TypeScript errors, ESLint errors, invalid async handling,
+  or invalid Playwright/Vitest API usage.
+- **NEVER use TypeScript escape hatches.** The patterns
+  `@ts-expect-error`, `@ts-ignore`, `@ts-nocheck`, `: any`, `any[]`,
+  `as any`, and `as unknown` are absolute hard-fails in any test
+  file you write. They hide real bugs in test code under the
+  guise of red-state suppression. Imports of not-yet-existing
+  contract-promised modules will produce `TS2307` errors at red
+  state — those are correct and the validator accepts them. **No
+  suppression is needed and no suppression is permitted.**
 
 ## Greenfield Tasks
 
@@ -214,9 +295,20 @@ target yet:
   coverage or an explicit untestable note.
 - **RED_FOR_RIGHT_REASON**: Tests fail only because product behavior is
   missing, not because the tests are broken.
-- **TYPECHECK_CLEAN**: Generated tests do not introduce TypeScript
-  errors. Future implementation imports, if required for a red-state test,
-  use a narrow task-labeled `@ts-expect-error` so `tsc --noEmit` passes.
+- **TYPECHECK_HONEST_RED_STATE**: `tsc --noEmit` is **not expected
+  to pass** at red state, because the implementation that would
+  resolve the imports has not been written yet. The only errors
+  generated tests should produce under tsc are
+  `TS2307 "Cannot find module"` errors on paths the contract
+  promises `task-implement` will create — those are correct and
+  the validator accepts them. Any other tsc error is a real
+  defect in the test code and must be fixed.
+- **NO_ESCAPE_HATCHES**: No test file contains `@ts-expect-error`,
+  `@ts-ignore`, `@ts-nocheck`, explicit `any`, `any[]`, `as any`,
+  or `as unknown`. These patterns are absolute hard-fails — they
+  hide real bugs in test code under the guise of "red-state
+  suppression" and are rejected by both the reviewer and the
+  validator gate.
 - **LINT_CLEAN**: Generated tests do not introduce ESLint errors.
 - **NO_IMPLEMENTATION_EDITS**: Production source files are untouched.
 - **COMMITTED_READY**: The generated test suite is ready for the

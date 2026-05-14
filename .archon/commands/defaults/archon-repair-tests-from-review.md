@@ -51,8 +51,34 @@ an impossible target if not fixed. Common fixes:
 - Wrap `vi.advanceTimersByTime(...)` in `await act(async () => { ... })`
   and the subsequent assertion in `await waitFor(() => ...)`.
 - Delete `__stubs__/X.ts` files; switch the test's import to the
-  contracted path with a narrow `@ts-expect-error WOR-NN` comment
-  annotated with the issue key.
+  contracted path **without any suppression**. At red state the
+  import will produce a `TS2307 "Cannot find module"` error from
+  TypeScript — that is the expected red-state error, and the
+  contract-aware validator (`test-gen-validate.ts`) tolerates it.
+
+If the review flagged `typescript_escape_hatches` entries,
+**remove every suppression**. Each entry names the file, line,
+pattern, and offending text. For each:
+
+- Delete the `@ts-expect-error`, `@ts-ignore`, or `@ts-nocheck`
+  comment outright. Do not "narrow" it. Do not move it. Delete it.
+- Replace `: any` annotations with the real type. If the test is
+  doing dynamic indexing that requires the `any`, the test design
+  is wrong — restructure to use a typed accessor or the typed
+  contract shape. Do not paper over with `: any`.
+- Replace `as any` / `as unknown` casts with a proper type. Same
+  reasoning: if the test inherently can't be typed, the test
+  design needs rethinking.
+- After removing the suppressions, the resulting test will likely
+  produce TypeScript errors:
+  - **`TS2307 "Cannot find module"` on contract-promised paths is
+    expected and accepted at red state.** Leave it. `tsc` is not
+    expected to pass at red state — the validator knows this and
+    tolerates these specific errors.
+  - **Any other tsc error (TS7053, TS2304, TS2322, etc.) is a real
+    test-code bug that the suppression had been hiding.** Fix the
+    test code. Restructure the dynamic indexing. Use a proper
+    typed accessor. Re-design the assertion. Do not re-suppress.
 
 After the mechanical issues are resolved, address coverage gaps,
 weak tests, and other repair items.
@@ -65,9 +91,19 @@ Forbidden:
 - Mocking the system under test
 - Encoding fake IDs, selectors, or fixture-specific behavior unless they
   are part of the public product contract
+- **Reintroducing TypeScript escape hatches.** `@ts-expect-error`,
+  `@ts-ignore`, `@ts-nocheck`, `: any`, `any[]`, `as any`, and
+  `as unknown` are absolute hard-fails in every test file. Never
+  add them back during repair, even to "make typecheck pass." The
+  validator and reviewer will reject them again.
 
 **PHASE_2_CHECKPOINT:**
 - [ ] Review-required repairs are implemented
+- [ ] No TypeScript suppressions in any test file after repair
+      (`@ts-expect-error`, `@ts-ignore`, `@ts-nocheck`, `: any`,
+      `any[]`, `as any`, `as unknown`)
+- [ ] Valid TypeScript everywhere else. The only acceptable tsc
+      errors are `TS2307` on contract-promised paths.
 - [ ] AC coverage is preserved or improved
 - [ ] No implementation source files were edited
 
