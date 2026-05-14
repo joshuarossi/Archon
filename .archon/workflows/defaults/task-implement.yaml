@@ -812,8 +812,33 @@ nodes:
       export ARTIFACTS_DIR="$ARTIFACTS_DIR"
       bun /home/user/Archon/.archon/scripts/task-transition-to-done.ts
 
+  # ─── Human-review halt path ──
+  # Synthesizer ruled NEEDS_DISCUSSION AND no findings are auto-fixable
+  # (decision='needs_human_review' from parse-synthesis). Apply the
+  # archon-needs-review label, post a structured Jira comment with the
+  # discussion items, leave PR open and ticket In Progress. The
+  # operator decides: merge manually, re-trigger after guidance, or
+  # close and reset. This is the third terminal branch alongside
+  # merge-pr (the merge path) and the implicit "validate-failed →
+  # nothing runs" path.
+  - id: flag-for-human-review
+    depends_on: [ parse-synthesis, verify-pr-ready ]
+    when: "$parse-synthesis.output.decision == 'needs_human_review'"
+    bash: |
+      set -euo pipefail
+      export ARTIFACTS_DIR="$ARTIFACTS_DIR"
+      export WORKFLOW_NAME="task-implement"
+      bun /home/user/Archon/.archon/scripts/task-flag-needs-human-review.ts
+
+  # Worklog runs on either terminal branch — transition-to-done (merge
+  # path) OR flag-for-human-review (halt path). all_done so the worklog
+  # records elapsed time even when the run halts for human attention.
+  # When neither runs (validation never reached a verdict, or some
+  # upstream node hard-failed), this also skips and the worklog is
+  # omitted — which is the right behavior for a broken run.
   - id: log-elapsed-on-task
-    depends_on: [ transition-to-done ]
+    depends_on: [ transition-to-done, flag-for-human-review ]
+    trigger_rule: all_done
     bash: |
       # Worklog the total task-implement elapsed time on the Jira ticket.
       set -euo pipefail

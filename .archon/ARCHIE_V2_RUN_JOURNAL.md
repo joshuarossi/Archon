@@ -1797,3 +1797,122 @@ first by issuekey: WOR-102 (App shell — Vite + React +
 ConvexProvider routing). That's a frontend ticket — first
 non-pure-helper, first React surface. Worth keeping the journal
 close for it.
+
+---
+
+## Entry — 2026-05-14, 13:00 CDT — The NEEDS_DISCUSSION orphan branch
+
+### Symptom
+
+WOR-101 (transcript compression) ran cleanly through task-tests and
+task-implement (4 attempts; the validator fix from earlier today
+actually ran vitest this time — the per-client WeakMap cache fix
+landed correctly across the repair loop). PR #11 opened with all
+local gates green.
+
+Then the workflow just... stopped. No active runs. PR sat open. Ticket
+sat In Progress. No comment, no label, no nothing.
+
+### Root cause
+
+The post-PR review pipeline is: five reviewers (scope, docs,
+error-handling, comment-quality, code) → `synthesize` →
+`parse-synthesis`. The synthesizer's verdict template explicitly
+designs THREE possible outputs:
+
+- **APPROVE** — 0 CRITICAL/HIGH → merge
+- **REQUEST_CHANGES** — ≥1 CRITICAL/HIGH that must be auto-fixed
+- **NEEDS_DISCUSSION** — no must-fix, but MEDIUM/LOW that warrant
+  human judgment
+
+For WOR-101 the synth ruled NEEDS_DISCUSSION: 0 CRITICAL/HIGH but
+2 MEDIUM (Haiku response shape not validated; docs over-promise
+budget enforcement) plus 4 LOW. The `parse-synthesis` script mapped
+it to `decision: "needs_discussion"`. The downstream `when:` clauses
+only handled `approve` and `changes_requested`. **No branch existed
+for `needs_discussion`**, so `implement-fixes`, `post-fix-validation`,
+and `merge-pr` all skipped. Workflow terminated. PR orphan.
+
+This is the SAME failure mode as the silent-SKIP regression earlier
+today: an upstream emitter (the synthesizer prompt) designed an
+output value that downstream consumers (the gate `when:` clauses)
+didn't know how to handle. I caught it because Josh asked "what is
+the status here, it looks like it created the PR" — without that
+prompt, the run would have sat there silently until someone noticed
+the missing merge.
+
+### Process gap
+
+The validator-skip lesson was: "every pipeline-node change requires
+auditing downstream consumers." This case adds a corollary: **every
+schema with N possible values needs every consumer to cover all N**.
+If a prompt designs three verdicts and parse-synthesis maps to three
+strings, the workflow must have three branches — or one of the
+branches must explicitly subsume the third. A two-of-three
+implementation isn't merely incomplete; it's a guaranteed-someday
+trap.
+
+Two complementary defenses:
+
+1. **Explicit enum coverage**: when a consumer reads a finite enum,
+   its branches must collectively cover every value. Today: APPROVE,
+   REQUEST_CHANGES, NEEDS_DISCUSSION. Three values, three branches.
+2. **Output-format schema enforcement** (not done in this PR — flagged
+   as a v2 followup): add an `output_format` block to `parse-synthesis`
+   that declares `decision` as an enum, so the engine refuses to
+   accept an unrecognized value rather than letting it propagate.
+
+### Routing rule (operator's call)
+
+Josh's rule: NEEDS_DISCUSSION with auto-fix candidates → treat as
+`changes_requested` (run the auto-fix loop on the mediums).
+NEEDS_DISCUSSION with zero auto-fix candidates → genuine
+human-review case (label + halt). The synthesizer's own
+"**Auto-fix Candidates**: N issues" line is the count we need —
+parse-synthesis reads it.
+
+So the three-branch routing collapses to:
+
+| Synth verdict | auto-fix count | → decision |
+|---|---|---|
+| APPROVE | (any) | `approve` |
+| REQUEST_CHANGES | (any) | `changes_requested` |
+| NEEDS_DISCUSSION | > 0 | `changes_requested` |
+| NEEDS_DISCUSSION | == 0 | `needs_human_review` |
+
+WOR-101 has 2 auto-fix candidates → would have routed to
+`changes_requested`, run `implement-fixes` on the Haiku-shape guard
+and the doc-language fix, re-validated, merged.
+
+### Fix
+
+Single PR (Archon-side):
+- `task-parse-synthesis.ts` — added auto-fix-count regex, expanded
+  decision enum to `approve | changes_requested | needs_human_review`,
+  collapsed NEEDS_DISCUSSION-with-fixes into `changes_requested`,
+  fail-closed UNKNOWN → `needs_human_review`.
+- `task-flag-needs-human-review.ts` — new script that applies
+  `archon-needs-review` label, posts a structured Jira comment with
+  the consolidated review, leaves PR + ticket untouched.
+- `task-implement.yaml` — new `flag-for-human-review` node parallel
+  to the merge branch; `log-elapsed-on-task` now `all_done` fan-in of
+  both terminal branches so the worklog records elapsed time on
+  either path.
+
+### Unblocking WOR-101
+
+The fix routes future NEEDS_DISCUSSION-with-fixes runs through
+`implement-fixes`, but WOR-101's run is already complete (workflow
+terminated). Options for the existing PR:
+- **Resume the run** post-PR-merge: `bun run cli workflow resume`
+  skips completed nodes and would NOW route correctly because
+  parse-synthesis re-runs and re-emits `changes_requested`.
+- **Merge PR #11 manually**: the 2 MEDIUM findings are real but
+  non-critical; the implementation passes 30/30 tests and is
+  contract-compliant.
+- **Apply the fixes by hand**: tiny — a Haiku-shape guard and a
+  doc-language softening.
+
+Going with manual merge for now; the followup fixes can be a
+follow-up ticket. Re-firing WOR-101 just to test the new routing
+costs more than it's worth.
