@@ -11,12 +11,33 @@
  *   *.spec.{ts,tsx,js,jsx,mjs,cjs}
  *   playwright.config.{ts,js}, vitest.config.{ts,js} (test infra files count too)
  *
- * stdout: { test_file_count, files }
+ * Two output channels (per Archon's authoring-workflows contract):
+ *
+ *   INFORMATION channel — writes the full report to
+ *     `$ARTIFACTS_DIR/test-files-report.json` for any downstream node
+ *     that wants the file list (e.g. jira-transition-task-to-in-progress.ts
+ *     reads this to enrich the Jira comment).
+ *
+ *   STATE channel — emits a small JSON object on stdout for `when:`
+ *     condition evaluation via `$node.output.field`. Archon's bash-node
+ *     runtime captures stdout as `nodeOutput.output` and parses it as
+ *     JSON when conditional substitution requests a `.field`.
+ *
+ * Narration → stderr (irrelevant to the contract; just keeps stdout clean
+ * for the state channel).
  */
+import { readdir, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
+
+const artifactsDir = process.env.ARTIFACTS_DIR;
+if (!artifactsDir) {
+  console.error('ARTIFACTS_DIR not set');
+  process.exit(1);
+}
 
 async function git(...args: string[]): Promise<string> {
   try {
@@ -32,7 +53,7 @@ async function git(...args: string[]): Promise<string> {
   }
 }
 
-console.log('Diffing working tree against origin/main to find test files...');
+console.error('Diffing working tree against origin/main to find test files...');
 
 // Refresh origin/main first so the diff compares against the actual current
 // main, not whatever stale ref this worktree last fetched. Sibling tickets
@@ -43,7 +64,7 @@ console.log('Diffing working tree against origin/main to find test files...');
 try {
   await git('fetch', 'origin', 'main', '--quiet');
 } catch (e) {
-  console.log(`Warning: could not refresh origin/main: ${(e as Error).message}`);
+  console.error(`Warning: could not refresh origin/main: ${(e as Error).message}`);
 }
 
 // Include both committed and uncommitted changes — depending on agent ordering
@@ -70,11 +91,17 @@ const TEST_PATH_PATTERNS = [
 
 const testFiles = allChanged.filter(f => TEST_PATH_PATTERNS.some(re => re.test(f)));
 
-console.log(`Files changed vs origin/main: ${allChanged.length}`);
-console.log(`Test-shaped files: ${testFiles.length}`);
+console.error(`Files changed vs origin/main: ${allChanged.length}`);
+console.error(`Test-shaped files: ${testFiles.length}`);
 for (const f of testFiles) {
-  console.log(`  ✓ ${f}`);
+  console.error(`  ✓ ${f}`);
 }
+
+// INFORMATION channel: write the full report file to ARTIFACTS_DIR.
+const reportPath = `${artifactsDir}/test-files-report.json`;
+const report = { test_file_count: testFiles.length, files: testFiles };
+await writeFile(reportPath, JSON.stringify(report, null, 2));
+console.error(`Wrote ${reportPath}`);
 
 if (testFiles.length === 0) {
   console.error('\nNo test files detected in the diff. Test-gen agent produced no testable output.');
@@ -82,9 +109,18 @@ if (testFiles.length === 0) {
   for (const f of allChanged) {
     console.error(`    ${f}`);
   }
+  // STATE channel: emit the failing status before exiting so `when:` can read it.
+  process.stdout.write(
+    JSON.stringify({ passed: false, test_file_count: 0, report: reportPath })
+  );
   process.exit(1);
 }
 
+// STATE channel: small JSON object Archon captures as $node.output.
 process.stdout.write(
-  '\n' + JSON.stringify({ test_file_count: testFiles.length, files: testFiles })
+  JSON.stringify({
+    passed: true,
+    test_file_count: testFiles.length,
+    report: reportPath,
+  })
 );
