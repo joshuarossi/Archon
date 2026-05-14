@@ -114,17 +114,22 @@ the ticket or existing public UI/API contract.
 ## Phase 3: GENERATE - Write Tests and Minimal Infrastructure
 
 Write:
-- Vitest tests in `tests/<task-id>/<unit-name>.test.ts`, using a
-  lowercase task id. Match an existing co-located convention only if the
-  repo already has one.
-- Playwright tests in `e2e/<task-id>/<flow-name>.spec.ts`, using a
-  lowercase task id.
+- **The contract's `tested_by` entries tell you where each test
+  goes.** Every entry has a `file:` field with the exact path. Place
+  each test at that exact path. The contract is authoritative; do
+  not rename, relocate, or split test files differently from what
+  the contract says.
+- If a `tested_by` entry is missing its `file:` field, that's a
+  contract gap. Flag it in your final status report rather than
+  inventing a path — the contract author should fix it on the next
+  iteration.
 - Test infrastructure only if needed for the tests to run:
-  `vitest.config.ts`, `playwright.config.ts`, tsconfig adjustments, and
-  minimal `package.json` changes.
+  `vitest.config.ts`, `playwright.config.ts`, tsconfig adjustments,
+  and minimal `package.json` changes. Most projects already have
+  these scaffolded; verify before writing.
 - Missing test devDependencies only when required: `vitest`,
-  `@vitest/ui`, `playwright`, `@playwright/test`, or project-appropriate
-  helpers. Be minimal.
+  `@vitest/ui`, `playwright`, `@playwright/test`, or
+  project-appropriate helpers. Be minimal.
 - Required npm scripts if missing:
   - `"test"`: runs Vitest, for example `vitest run`
   - `"test:e2e"`: runs Playwright, for example `playwright test`
@@ -280,13 +285,14 @@ Output a concise final status:
 
 ## Greenfield Tasks
 
-If the task is project scaffolding and there is no product behavior to
-target yet:
-- Write a Vitest smoke test at `tests/<task-id>/scaffolding.test.ts`
-  that imports Vitest and asserts the test environment is wired.
-- Write a Playwright smoke test at `e2e/<task-id>/scaffolding.spec.ts`
-  that visits the default local app URL and asserts a successful
-  response or visible starter UI.
+If the task is project scaffolding and the contract has no product
+behavior to target yet (i.e. `tested_by` entries are absent or all
+marked greenfield):
+- Write a Vitest smoke test at the contract's specified smoke-test
+  path. If the contract doesn't specify one, use
+  `tests/smoke/scaffolding.test.ts` as the project default.
+- Write a Playwright smoke test at the contract's specified path or
+  `e2e/smoke/scaffolding.spec.ts` as the project default.
 - Keep these smoke tests lint-clean and typecheck-clean.
 
 ## Success Criteria

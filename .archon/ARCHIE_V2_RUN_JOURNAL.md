@@ -1126,4 +1126,525 @@ After these fixes, the fourth attempt should reach merge.
   ticket back to Backlog with `archon-blocked-pending`).
 - `bun run validate` pending.
 
+---
+
+## Thursday, May 14 2026 · 3:37 AM CDT — Fourth WOR-95 attempt revealed a Phase-0-shape problem
+
+The fourth run did much better. task-tests succeeded cleanly (no
+escape hatches, new validator passed, structured-evidence array
+properly populated). WOR-95 transitioned to In Progress.
+task-implement dispatched. **Then it failed at rebase-on-main.**
+
+### The mechanical conflict
+
+The test-gen branch was created when main was at
+`ce07bd9 ci: add four-stage placeholder workflow`. Between
+task-tests and task-implement firing, main moved forward — Josh
+had committed `e41d8d0 added convex-test` to main. The test-gen
+agent had already rewritten `package.json` (adding eslint,
+vitest, typescript, playwright as devDeps; the existing convex
+dep was preserved but the new `convex-test` dep wasn't there
+yet). Rebase tried to combine the two changed `package.json`s and
+conflicted on the `devDependencies` block.
+
+`rebase-on-main` aborted with the conflict, surfaced loud. The
+DAG correctly cascaded: `implementation-ready` reported
+`ready: false`, `fail-implementation-not-ready` fired with
+`exit 1` (its job — surface the loud failure),
+`merge-pr`/`transition-to-done`/etc all skipped via `when:`
+conditions. **System working as designed.** No PR opened on a
+broken implementation, no false Done transition. Halt-loud,
+exactly Principle 3.
+
+### What the failure surfaced
+
+The mechanical conflict pointed at a deeper shape issue in how
+the plan structures Phase 0 vs the rest of the work. Looking at
+the plan order:
+
+| Order | Ticket | Surface | Assumes |
+|---|---|---|---|
+| P0.1 | Convex Cloud Project | human | — |
+| T1  | `convex/schema.ts` | convex-schema | `convex/` dir exists, convex installed, tsconfig present |
+| P0.2 | Anthropic API Key | human | — |
+| T2  | `convex/lib/stateMachine.ts` | convex-helper | same |
+| P0.3 | Google OAuth Credentials | human | — |
+| T3  | `convex/lib/auth.ts` | convex-helper | same |
+| P0.4 | GitHub repo with Actions | human | — |
+| T4  | `convex/lib/errors.ts` | convex-helper | same |
+| T5-T7 | more `convex/lib/*` | convex-helper | same |
+| **T8** | **App shell — Vite + React + ConvexProvider + routing** | react-page | — |
+
+T1-T7 all assume the project is scaffolded. **T8 is where Vite +
+React + ConvexProvider get set up.** Everything before T8 has to
+either pretend the scaffolding exists or invent it as a side
+effect. The test-gen agent for WOR-95 invented `vitest.config.ts`,
+`eslint.config.js`, `tsconfig.json`, and a `package.json` with
+its own choice of devDeps — none of which are the ticket's actual
+"job."
+
+### The cleaner statement (Josh's framing)
+
+**A ticket saying "make a test for X" should not require the
+agent following those instructions to install the test runner,
+write the test config, configure ESLint, or invent project
+scaffolding.**
+
+The ticket gives the agent ONE job: write a test against
+contract X. Everything the test needs to *run* — vitest, the
+harness, the type config, the linter, the project structure —
+must already exist when the ticket starts. Otherwise:
+
+1. The agent invents it. Different invented setups across
+   different tickets ⇒ divergence, conflicts on shared files
+   like `package.json`/`tsconfig.json`, repeated work.
+2. The agent's attention is split between "real work" and "yak
+   shaving scaffolding." Quality drops.
+3. The contract becomes less authoritative because the agent has
+   to make scaffolding decisions the contract doesn't cover.
+4. The cage assumes a stable runtime, but the runtime is being
+   installed *inside* the cage. Weird interactions.
+
+This is the same principle that justified Phase 0 in the first
+place: **things that aren't the agent's job get done before the
+agent shows up.** Phase 0 (as it currently exists) only covers
+the *cloud-account / external-credential* layer. It should also
+cover the *project-toolchain / scaffolding* layer.
+
+### What "scaffolding Phase 0" should look like
+
+A full Phase 0 for a Vite+Convex project should produce a `main`
+that already has:
+
+- `package.json` with the full dev toolchain installed
+  (Vite, React, Convex, convex-test, Vitest, Playwright,
+  TypeScript, ESLint + plugins). Locked in `package-lock.json`.
+- `tsconfig.json` configured for the project's TS target.
+- `vite.config.ts`, `vitest.config.ts`, `playwright.config.ts`,
+  `eslint.config.js` all present with sensible defaults.
+- `convex/` directory initialized (`npx convex dev --once`
+  generates `_generated/` types, sets up the config).
+- `src/main.tsx` stub with `<ConvexProvider>` wired up.
+- `App.tsx` stub that renders something.
+- CI workflow file already in place (we did this — `ci.yml`).
+- `.env.example` listing every required runtime var.
+- `.gitignore` with all the usual entries.
+
+Then ticket T1 ("Convex schema") opens a worktree where all of
+the above is already present, writes `convex/schema.ts`, and is
+done. Branch contains only the schema file + its test file +
+maybe one `package.json` line if it needs a new transitive
+import. No `npm install` invocations from inside ticket work. No
+config files invented by agents. No package.json conflicts
+between sibling tickets.
+
+### Why the plan didn't include this
+
+The mark4 decomposition treats "scaffolding" as part of T1-T7's
+implicit responsibility because the *spec* doesn't separate
+scaffolding from feature work. The TechSpec describes "the system
+uses Vite + React + Convex" as a fact about the project, not as
+an explicit setup ticket. The decomposer reads that and produces
+tickets for what the spec mentions explicitly: schema, state
+machine, auth helper, etc. The scaffolding is *implied* but not
+*decomposed*.
+
+### Future-fix for the rubric
+
+Adding a `scaffolding_completeness` dimension to the mark4
+evaluator: **before the first code ticket runs, the repo must
+contain enough toolchain that every subsequent ticket can run
+`npm test` without modifying any config file.** If the plan
+doesn't include scaffolding tickets (or doesn't include them as
+Phase 0 / very-early), it should be a `required_repair`.
+
+The simpler version: every plan should have **exactly one
+"project initialization" ticket** — either as P0.N (operator
+runs `npm create vite + npx convex init` and commits the result)
+or as T0 (agent-driven scaffolding-only ticket with no test
+target, just `set up the project to spec`). After that ticket
+lands, every subsequent ticket inherits a properly-configured
+repo.
+
+### What we did right now (operationally)
+
+Josh's manual `e41d8d0 added convex-test` commit was actually
+*doing* the missing scaffolding step by hand. The conflict
+happened because the agent had already invented the scaffolding
+in the test-gen branch before the operator added the same
+toolchain to main. **The conflict is a structural symptom of
+"two paths trying to scaffold the same thing."**
+
+The fix for this specific run: discard the test-gen branch,
+re-fire WOR-95 off the now-current main (which has
+`convex-test` already in devDeps). The agent will start in a
+better-scaffolded repo. It might still write `eslint.config.js`
+etc. (since those aren't in main yet) — so the package.json
+conflict could recur if Josh commits more toolchain to main
+between attempts. The robust answer is the full "scaffolding
+Phase 0" above. For today: re-fire, observe, journal.
+
+### State
+
+- Failed task-tests + task-implement abandoned (`557cd9cc`,
+  `5c87e707`).
+- `archon/task-wor-95` deleted (origin + local) and worktree
+  removed.
+- Source clone pulled to `e41d8d0` (now has convex-test).
+- WOR-95 reset to Backlog + `archon-blocked-pending`.
+- Fifth attempt fired: task-tests `3edd3313` running.
+
+---
+
+## Thursday, May 14 2026 · 4:08 AM CDT — The cage seals around broken scaffolding (deadlock)
+
+The fifth attempt's task-tests ran clean. task-implement
+dispatched. **rebase-on-main passed** (no package.json conflict —
+the convex-test alignment fix worked). baseline-test passed. Dev
+loop entered.
+
+Then **the dev loop hit attempts 1, 2, 3, 4 in a row with the
+same failure**: 13 of 32 vitest tests crash with
+`glob is not a function` before any schema validation runs. The
+schema itself (`convex/schema.ts`) is **correct** — all 11
+tables, 15 indexes, validators, all matching the contract.
+
+### What's actually broken
+
+`vitest.config.ts` is missing
+`server.deps.inline: ["convex-test"]`. Without that, vitest
+treats convex-test as an external npm package and skips Vite's
+transform pipeline. convex-test internally uses
+`import.meta.glob` (a Vite compile-time transform). At runtime
+that's undefined → crash → all 13 runtime tests fail.
+
+The reviewer correctly diagnosed this from attempt 1. Every
+review iteration says: *"vitest.config.ts must include
+server.deps.inline: ['convex-test']"*. By attempt 4 the
+reviewer's instructions had escalated to: *"Use the Bash tool
+with a heredoc, since Write/Edit have silently failed in all
+prior attempts."*
+
+### The dev agent literally cannot fix it
+
+`vitest.config.ts` is a **test infrastructure file**. The cage
+hook in task-implement protects test-shaped paths from
+implementation-side edits — exactly the load-bearing safety rail
+that prevents the dev agent from gaming tests by disabling them.
+The hook is doing its job.
+
+But the file the dev agent needs to fix to make the *real* tests
+run is on the protected list. **Every Write / Edit / Bash heredoc
+that attempts to modify vitest.config.ts gets blocked silently.**
+The agent reports success (no error surfaces); the file on disk
+doesn't change; next attempt the reviewer reads the same broken
+config and re-issues the same instruction.
+
+Four attempts in. Attempt 5 will fail the same way. Then
+`fail-implementation-not-ready` will fire with `exit 1`. WOR-95
+stays In Progress; no PR; pipeline halts loud at the gate.
+
+### The structural insight (this is the v3 takeaway)
+
+This deadlock is not a bug in any single component. **Every
+component is doing the right thing:**
+
+| Component | Behavior | Correct? |
+|---|---|---|
+| Cage hook | Refuses to let dev agent edit `vitest.config.ts` | YES |
+| Reviewer | Refuses to pass while 13 tests are crashing | YES |
+| Dev agent | Tries to fix the file but is silently blocked | tries to do the right thing |
+| Test-gen agent (prior phase) | Wrote a `vitest.config.ts` that didn't include the convex-test inline | the actual gap |
+| Operator setup (Phase 0) | Didn't include "verify the test runner is sound" | the deeper gap |
+
+The deadlock is what happens when **the cage seals around a
+broken test environment.** The cage works perfectly when the
+test infrastructure is sound — the dev agent's only job is to
+make assertions pass against a runner that already runs. The
+cage fails the system when the test infrastructure itself is
+broken, because then "make tests pass" requires fixing the infra,
+which the cage forbids.
+
+### Phase-0 / task-tests ownership of test infrastructure
+
+There are exactly two opportunities to author working test
+infrastructure: **Phase 0 (operator) and task-tests (test-gen
+agent)**. Once task-implement starts, the cage closes around
+test infrastructure permanently. So:
+
+1. **task-tests is the last writable moment.** The test-gen
+   prompt should require the agent to **actually run the test
+   runner** (e.g. `vitest run` on the new tests) and confirm it
+   produces real test results — not crashes or import errors —
+   before declaring success. If the runner can't start, the
+   config is wrong; fix it now while editing is still allowed.
+
+2. **Even better: Phase 0 handles it.** Operator setup commits a
+   working `vitest.config.ts`, `playwright.config.ts`,
+   `tsconfig.json`, `eslint.config.js`, and a CI-runnable smoke
+   test that proves each runner works against the project's
+   actual harness. Then task-tests can only *add* tests to a
+   proven-working runner; it can't break the config.
+
+The simpler statement of the same principle:
+
+> **The scaffolding has to be proven-functional before the cage
+> closes**, not assumed-functional. The system's "test runner
+> works" invariant must be established before task-implement runs;
+> the dev agent has no path to repair it.
+
+### Predictions for this run
+
+- Attempt 5 will fail identically: dev agent attempts a write,
+  cage silently blocks, file unchanged, vitest still crashes,
+  reviewer still fails, validation fails.
+- `fail-implementation-not-ready` fires.
+- DAG cascade-skips merge-pr, transition-to-done, etc.
+- WOR-95: In Progress. PR #1: not opened. Run: marked failed.
+- **Pipeline halts at a real architectural gap, correctly.**
+
+### What this means for the test plan
+
+This is the most important finding of the WOR-95 series, and
+the structural change with the biggest leverage of anything we
+could ship. Bigger than the prompt fixes, the validator
+refactor, the comment format, all of it. **It's the difference
+between "the cage works" and "the cage works when scaffolding is
+done."**
+
+For the v3 backlog or this v2 effort's final shape:
+
+- **Add a `verify-test-runner-works` node to task-tests** — runs
+  `vitest run` (or the project's actual test command) against a
+  trivially-passing smoke test, confirms the runner produces
+  real output. If it crashes / can't load configs / can't find
+  files, halt task-tests with the same failure-loud discipline.
+  Don't let a broken test runtime escape into task-implement
+  where the cage will lock it away.
+- **OR add a Phase 0 ticket: "Verify project scaffolding is
+  test-runner-ready."** Operator runs `npm test -- --run` on a
+  baseline smoke test before promoting any feature ticket.
+- **Most ambitious: a Phase 0 ticket that's literally
+  `npm create vite + npx convex init + add all configs + write
+  smoke test + commit + push`**, owned by an operator-driven
+  setup workflow. Then every ticket starts in a fully-scaffolded
+  repo with a proven-working test runner.
+
+For now: **let the fifth run fail, observe it halt loud at the
+deadlock, journal the failure**, and treat that as the closing
+data point of the WOR-95 series. The system halted correctly at
+a real gap. The next round of work is the scaffolding-readiness
+fix above.
+
+---
+
+## Thursday, May 14 2026 · 4:17 AM CDT — Decision: add a T0 scaffolding ticket to the mark4 decomposer
+
+The cage-around-broken-scaffolding deadlock has a clean answer
+that doesn't require any new workflow type, prompt, or engine
+change:
+
+> **The decomposer should always produce a T0 "set up the test
+> infrastructure" ticket that every other code ticket depends on.**
+
+A T0 ticket fits the existing workflow shape perfectly:
+
+- `task_id: T0`, `surface: scaffolding`,
+  `depends_on: [P0.1, P0.2, P0.3, P0.4]` (all the Phase 0
+  credential/account tickets).
+- Every other T-numbered ticket gets `T0` added to its
+  `depends_on` array.
+- The contract for T0 names the test-infrastructure files the
+  project needs (`vitest.config.ts`, `tsconfig.json`,
+  `eslint.config.js`, `playwright.config.ts`, etc.) and any
+  package-level commitments (devDeps, `lint` / `typecheck` /
+  `test` scripts).
+- The AC for T0 is verifiable: "`npm test`, `npm run lint`,
+  `npm run typecheck` all run successfully on a trivial smoke
+  test."
+- The task-tests agent for T0 writes the config files **and a
+  smoke test**. The smoke test is just the proof-of-life for the
+  runner.
+- The dev agent on T0 has nothing to do — the smoke test passes
+  with no production code needed. validate-1 succeeds first try,
+  PR opens with just the scaffolding commits, reviewer passes
+  (it's just config), merge happens, task-done fires.
+- Every downstream ticket starts in a worktree with proven-working
+  scaffolding. **The cage closes around a known-good test
+  environment, every time.**
+
+### What changes in mark4
+
+Add a `scaffolding_completeness` dimension to the adversarial
+evaluator's Pass 2 (structure). Required entries it must verify:
+
+1. A scaffolding ticket exists at the front of the plan (T0 or
+   equivalent), explicitly listing the test-infrastructure files
+   the project needs.
+2. Its `depends_on` includes all Phase 0 tickets.
+3. Every other code ticket transitively `depends_on: T0`.
+4. The scaffolding ticket's contract names the test commands
+   that must work (`npm test`, etc.) and includes a smoke test.
+
+Scoring < passThreshold = `required_repair`. Missing T0 means
+the plan is structurally incomplete.
+
+This is a small addition to the prompt (one new dimension, a few
+lines on the rubric). Big leverage — it prevents the
+cage-around-broken-scaffolding deadlock for every future project
+the decomposer touches.
+
+### What we're doing for THIS run
+
+Not re-running decomposition. Not amending the plan
+mechanically. Instead, treating the missing T0 as a fact of
+WOR-90's plan and doing the equivalent scaffolding work by hand
+as if we were the workflow agent. Documenting it as a new child
+ticket under WOR-90 with a comment explaining why the work is
+being done outside the pipeline.
+
+Specifically:
+- Create a new Jira ticket as a child of WOR-90.
+- Title: something like "T0 — Project test scaffolding (manual,
+  missing from decomposition)".
+- Comment on it explaining: WOR-90's decomposition didn't
+  include a T0 scaffolding ticket. The WOR-95 series demonstrated
+  that without one, the cage in task-implement can't unstick
+  scaffolding gaps. Rather than redoing the decomposition,
+  we're filling the gap by hand and updating the mark4 rubric
+  for future projects.
+- Do the scaffolding work in the Clarity repo on a feature
+  branch, the same files the workflow would produce.
+- Commit, push, open PR, merge into main.
+- Mark the Jira ticket Done.
+
+Then re-fire WOR-95 fresh; the test-gen branch will start off a
+main with working scaffolding, and the cage-around-broken
+deadlock can't happen.
+
+The journal entry for this is the audit trail. The Jira ticket
+is the operational record. The mark4 rubric change is the
+permanent fix.
+
+---
+
+## Thursday, May 14 2026 · 4:53 AM CDT — First end-to-end hands-off success on Clarity
+
+Sixth WOR-95 attempt completed. After the manual T0 scaffolding
+work (committed via Clarity PR #2 / WOR-138), the entire chain
+ran without a single human touch:
+
+- `task-tests` ran. New contract authored. Tests written
+  (without escape hatches, validator approved). Branch
+  pushed, ticket transitioned to In Progress.
+- `task-implement` ran. Rebase clean (no package.json
+  conflict — the scaffolding lives on main). Baseline-test
+  passed. **Dev attempt 1 converged first try** — no
+  retries needed. The Convex schema implementation was
+  correct on the first attempt because the test runtime
+  worked from the start.
+- `implementation-quality-final` approved.
+- `generate-docs` produced the changelog fragment + data
+  model docs.
+- `open-pr` opened Clarity PR #3.
+- All 5 PR reviewers approved (scope, code,
+  error-handling, comment-quality, docs-impact). The only
+  observation was a test-path-convention drift
+  (`tests/wor-95/` vs the contract's `tests/unit/`) and
+  the reviewer correctly treated it as a non-blocking
+  note rather than a `required_repair`.
+- `synthesize` returned `approve`. `parse-synthesis`
+  routed to merge.
+- `merge-pr` squash-merged PR #3 into main.
+- `task-transition-to-done` moved WOR-95 to Done.
+- `task-done` swept; zero promotable tickets (everything
+  else still labeled). Pipeline returned to the
+  paused-checkpoint state.
+
+**Total intervention from us during the autonomous phase:
+zero.** Strip label, transition Backlog → SfD, and walk
+away. Then come back to a merged PR, a Done ticket, a
+schema file on main, and a system back at paused.
+
+This is the result we've been building toward.
+
+### What was the difference
+
+The scaffolding fix from WOR-138 (the manual T0). With
+working `vitest.config.ts`, `tsconfig.json`,
+`eslint.config.js`, `playwright.config.ts`, and all the
+devDependencies pre-committed to main, the test-gen agent
+didn't have to invent any configs. The dev agent's cage
+closed around a known-good environment. No deadlock
+possible.
+
+Every prior failure mode — escape hatches, validator
+plumbing, comment format, rebase conflicts, the
+cage-around-broken-scaffolding deadlock — all of them
+had been fixed in PRs #20, #21, #22, plus the manual
+WOR-138 scaffolding. The sixth attempt is the first one
+to run on a fully-fixed pipeline.
+
+### The remaining drift surfaced by the run
+
+The reviewer noted that test paths drifted: the contract
+said `tests/unit/schema.test.ts`, the test-gen agent
+wrote `tests/wor-95/schema.test.ts`. Both sides have
+their own convention; nothing picks a winner. The agent
+defaulted to its prompt's `tests/<task-id>/` pattern and
+ignored the contract's `tested_by[].file` paths.
+
+Cause: the `archon-generate-tests.md` prompt had baked-in
+language directing tests to `tests/<task-id>/`. **The
+contract was correct**; the test-gen prompt was
+overriding it.
+
+Fix shipped with this entry: rewrote the
+`archon-generate-tests.md` Phase 3 to make the contract
+authoritative. The agent now reads `tested_by[].file`
+and writes each test at exactly that path. No prompt-side
+fallback to per-task-id folders.
+
+The deeper lesson, again: **when two parts of the
+pipeline have overlapping responsibilities for the same
+decision, only one of them should be authoritative.**
+We had a contract author saying "tests go at path X" AND
+a test-gen prompt saying "tests go at path Y." Whichever
+the agent reads last wins. The fix is to say it once and
+have the other side defer to it.
+
+This is the same family of issue as the bash-node output
+contract (state-on-stdout vs file-in-ARTIFACTS_DIR — two
+ways to communicate, with the doc clarifying which one
+is canonical for which kind of data). And the
+"@ts-expect-error vs no-suppressions" issue (test-gen
+prompt said use it, reviewer prompt said don't — until
+PR #21 made them agree). Pattern: **find the conflicting
+sources of truth and pick one.**
+
+### State
+
+- WOR-95: Done. Clarity main now has `convex/schema.ts`
+  with all 11 tables.
+- Clarity PRs #2 + #3 merged. WOR-138 + WOR-95 both Done.
+- Pipeline at paused-checkpoint state with 45 remaining
+  tickets, all labeled `archon-blocked-pending`.
+- Local autonomous-run branches (`archon/task-wor-95`,
+  `archon/task-wor-138`) cleaned up.
+- `archon-generate-tests.md` prompt fixed to defer to
+  contract paths.
+
+### What we ship next
+
+This PR commits the prompt fix + this journal entry.
+After it merges, we can release the next WOR ticket (a
+foundation-layer convex-helper like WOR-100 privacy
+filter or WOR-101 transcript compression) and see whether
+the now-tightened convention propagates correctly.
+
+The remaining structural improvement (mark4 decomposer
+producing a T0 scaffolding ticket automatically) stays
+on the v3 backlog — important but not urgent. Until then,
+operators do scaffolding manually on each new project.
+
 
