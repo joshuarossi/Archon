@@ -54,28 +54,48 @@ Forbidden repairs:
 - weakening assertions just to make tests pass
 - mocking the system under test
 - deleting acceptance-criterion coverage
-- suppressing lint or type errors with broad disables, `any`, or
-  `@ts-ignore` unless narrowly justified by an external library type gap
+- **using TypeScript escape hatches.** `@ts-expect-error`,
+  `@ts-ignore`, `@ts-nocheck`, `: any`, `any[]`, `as any`, and
+  `as unknown` are absolute hard-fails in any test file. Adding
+  any of these patterns is **never** an acceptable repair, even
+  if the validator's typecheck is failing. The validator will
+  reject the suppression. The reviewer will reject the
+  suppression. The repair must address the underlying cause.
 
 Special case for TDD future imports:
-- Raw `TS2307: Cannot find module` errors for future implementation files
-  are not acceptable. They must be repaired.
-- If the missing import is the intended red-state implementation seam, add
-  a narrow `@ts-expect-error` directly above that import only, with the task
-  key and reason. Example:
+- `TS2307: Cannot find module` errors for not-yet-existing
+  implementation files **are expected and acceptable** at red
+  state, as long as the missing path is one the contract
+  promises `task-implement` will create. The validator
+  (`test-gen-validate.ts`) parses the contract's `files[].path`
+  list and tolerates exactly these errors. **Do not suppress
+  them.**
+- If the test imports a path that the contract does NOT promise,
+  that's a real test-code bug: either fix the import to use the
+  contracted path, or remove the unreferenced import.
 
-  ```ts
-  // @ts-expect-error WOR-123 red-state import: implementation is created by task-implement.
-  import { futureFunction } from "../../src/future-module";
-  ```
+If the validator reported `escape_hatches_found > 0`, those
+suppressions came from somewhere in the generated test files.
+The repair is to **remove every suppression** and address the
+underlying issue (real test bug, or a `TS2307` on a contract
+path that the validator already accepts).
 
-- Do not use `@ts-ignore`, broad file-level suppressions, or suppressions
-  for fixture/type mistakes. Those must be fixed normally.
+```ts
+// CORRECT — no suppression.
+// The TS2307 error at red state is expected and validator-accepted.
+import { futureFunction } from "../../src/future-module";
+```
+
+```ts
+// FORBIDDEN — never add a suppression as a repair.
+// @ts-expect-error WOR-123 red-state import
+import { futureFunction } from "../../src/future-module";
+```
 
 **PHASE_2_CHECKPOINT:**
 - [ ] The plan fixes test quality without reducing coverage
 - [ ] No production source edit is planned
-- [ ] No broad suppression is planned
+- [ ] No TypeScript escape-hatch pattern will be added by this repair
 
 ## Phase 3: IMPLEMENT - Repair Test Files Only
 
@@ -99,10 +119,13 @@ issues, report that clearly.
 
 **PHASE_4_CHECKPOINT:**
 - [ ] Generated tests have no ESLint errors
-- [ ] Generated tests have no TypeScript errors. Future implementation
-  imports, if required, use a narrow task-labeled `@ts-expect-error`.
+- [ ] No TypeScript suppressions in any test file after repair
+      (`@ts-expect-error`, `@ts-ignore`, `@ts-nocheck`, `: any`,
+      `any[]`, `as any`, `as unknown`)
+- [ ] Valid TypeScript everywhere else. The only acceptable tsc
+      errors are `TS2307` on contract-promised paths.
 - [ ] Any unrelated pre-existing failures are separated from generated
-  test failures
+      test failures
 
 ## Phase 5: REPORT - Finish
 
@@ -115,9 +138,18 @@ Summarize:
 ## Success Criteria
 
 - **LINT_CLEAN**: Generated tests do not introduce ESLint errors.
-- **TYPECHECK_CLEAN**: Generated tests do not introduce TypeScript
-  errors. Future implementation imports, if required for red-state
-  coverage, use a narrow task-labeled `@ts-expect-error`.
+- **TYPECHECK_HONEST_RED_STATE**: `tsc --noEmit` is **not
+  expected to pass** at red state, because the implementation that
+  would resolve the imports has not been written yet. The only
+  errors generated tests should produce under tsc are
+  `TS2307 "Cannot find module"` errors on paths the contract
+  promises `task-implement` will create — those are correct and
+  the validator accepts them. Any other tsc error is a real
+  defect in the test code and must be fixed (not suppressed).
+- **NO_ESCAPE_HATCHES**: No test file contains `@ts-expect-error`,
+  `@ts-ignore`, `@ts-nocheck`, explicit `any`, `any[]`, `as any`,
+  or `as unknown`. These patterns are absolute hard-fails in
+  every test file — adding them is **never** an acceptable repair.
 - **AC_COVERAGE_PRESERVED**: Repairs did not remove meaningful
   acceptance-criterion coverage.
 - **NO_IMPLEMENTATION_EDITS**: Production source files are untouched.
