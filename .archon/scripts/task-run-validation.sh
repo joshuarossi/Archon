@@ -292,26 +292,33 @@ run_quality_gate_task_scoped() {
   return 0
 }
 
-# 0. Deterministic generated-test cleanup
+# 0. (Removed: deterministic generated-test cleanup of obsolete
+#    @ts-expect-error directives.)
 #
-# Test-gen may temporarily suppress red-state missing implementation imports
-# with @ts-expect-error. Once implementation exists, TypeScript reports those
-# comments as TS2578. The dev agent cannot edit tests, so validation removes
-# only TypeScript-proven obsolete directives from this ticket's generated test
-# scope and commits the cleanup before the gates below run.
-cleanup_log="$ATTEMPT_RESULTS_DIR/obsolete-ts-expect-error-cleanup.log"
-if bun /home/user/Archon/.archon/scripts/task-cleanup-obsolete-ts-expect-error.ts > "$cleanup_log" 2>&1; then
-  echo "✓ obsolete-ts-expect-error cleanup completed"
-  add_gate "obsolete-ts-expect-error-cleanup" "passed" "$cleanup_log" "false" "false"
-else
-  echo "✗ obsolete-ts-expect-error cleanup failed. Last 40 lines of output:"
-  tail -40 "$cleanup_log" | sed 's/^/  /'
-  add_gate "obsolete-ts-expect-error-cleanup" "failed" "$cleanup_log" "true" "true"
-  OVERALL=1
-fi
+# Earlier versions of test-gen wrote `@ts-expect-error` at the top of
+# generated test files to suppress red-state imports of code the dev
+# agent had not yet written. Once implementation existed, TypeScript
+# reported those directives as TS2578 (unused @ts-expect-error), so a
+# cleanup gate stripped them before the other validation gates ran.
+#
+# That cleanup gate was a footgun: a file-scope `@ts-expect-error`
+# suppresses ALL type errors in the file, not just the import. When
+# the cleanup removed the directive, it sometimes unmasked unrelated
+# type errors in the test body that had been hidden the whole time,
+# leaving the workflow in a stuck state with no clean recovery (see
+# `ARCHIE_V2_RUN_JOURNAL.md`, WOR-95 entry).
+#
+# The root cause was upstream: test-gen used the wrong tool to express
+# "red state." The new contract-aware test-gen validator
+# (`.archon/scripts/test-gen-validate.ts`) replaces that approach
+# entirely. It forbids ALL TypeScript escape hatches in test files
+# (`@ts-expect-error`, `@ts-ignore`, `@ts-nocheck`, explicit `any`,
+# `as any`, `as unknown`) and distinguishes expected red-state errors
+# (TS2307 on contract-promised paths) from unexpected test-code
+# defects. With test-gen no longer producing `@ts-expect-error`
+# directives, this cleanup gate has nothing to do and is removed.
 
-# The cleanup may have committed generated-test fixes. Refresh the changed-file
-# attribution set before lint/typecheck decide which failures are blocking.
+# Initialize the changed-files attribution set for the gates below.
 git diff --name-only "$BASELINE_SHA"...HEAD > "$CHANGED_FILES_FILE" || true
 echo
 

@@ -238,65 +238,26 @@ nodes:
       # Test-gen owns test quality. The implementation agent is forbidden from
       # editing tests, so lint/typecheck issues in generated tests must be
       # caught and repaired before handoff.
+      #
+      # The validator (test-gen-validate.ts) enforces three rules:
+      #   1. No TypeScript escape hatches in any test file
+      #      (@ts-expect-error, @ts-ignore, @ts-nocheck, explicit any,
+      #      as any, as unknown). These hide real bugs in test code.
+      #   2. tsc must pass — EXCEPT for expected red-state errors:
+      #      TS2307 "Cannot find module 'X'" where X is a path the
+      #      contract promises task-implement will create. These are
+      #      tolerated because they're proof the red state is real.
+      #   3. Lint must pass (or be absent from package.json).
       set -euo pipefail
       export ARTIFACTS_DIR="$ARTIFACTS_DIR"
-      report="$ARTIFACTS_DIR/test-gen-quality-report.json"
-      lint_log="$ARTIFACTS_DIR/test-gen-lint.log"
-      typecheck_log="$ARTIFACTS_DIR/test-gen-typecheck.log"
 
       review_passed="$parse-test-review-final.output.passed"
       if [ "$review_passed" != "true" ]; then
-        printf '{"passed":false,"lint":"skipped","typecheck":"skipped","reason":"test_review_failed","review":"%s"}\n' "$ARTIFACTS_DIR/test-review.json" > "$report"
-        cat "$report"
+        printf '{"passed":false,"lint":"skipped","typecheck":"skipped","reason":"test_review_failed","review":"%s"}\n' "$ARTIFACTS_DIR/test-review.json"
         exit 0
       fi
 
-      if [ ! -f package.json ]; then
-        printf '{"passed":false,"lint":"failed","typecheck":"failed","reason":"missing package.json"}' > "$report"
-        cat "$report"
-        exit 0
-      fi
-
-      has_script() {
-        bun -e '
-          import { readFileSync } from "node:fs";
-          const pkg = JSON.parse(readFileSync("package.json", "utf8"));
-          process.exit(pkg.scripts?.[process.argv[1]] ? 0 : 1);
-        ' -- "$1"
-      }
-
-      lint_status="missing"
-      typecheck_status="missing"
-
-      if has_script lint; then
-        if npm run lint > "$lint_log" 2>&1; then
-          lint_status="passed"
-        else
-          lint_status="failed"
-        fi
-      else
-        printf 'Missing package.json script: lint\n' > "$lint_log"
-      fi
-
-      if has_script typecheck; then
-        if npm run typecheck > "$typecheck_log" 2>&1; then
-          typecheck_status="passed"
-        else
-          typecheck_status="failed"
-        fi
-      else
-        printf 'Missing package.json script: typecheck\n' > "$typecheck_log"
-      fi
-
-      if [ "$lint_status" = "passed" ] && [ "$typecheck_status" = "passed" ]; then
-        passed=true
-      else
-        passed=false
-      fi
-
-      printf '{"passed":%s,"lint":"%s","typecheck":"%s","lint_log":"%s","typecheck_log":"%s"}\n' \
-        "$passed" "$lint_status" "$typecheck_status" "$lint_log" "$typecheck_log" > "$report"
-      cat "$report"
+      bun /home/user/Archon/.archon/scripts/test-gen-validate.ts
 
   - id: repair-generated-tests
     depends_on: [ validate-generated-tests-1 ]
@@ -308,60 +269,13 @@ nodes:
     depends_on: [ repair-generated-tests ]
     when: "$validate-generated-tests-1.output.passed == 'false' && $validate-generated-tests-1.output.reason != 'test_review_failed'"
     bash: |
-      # Re-run test quality after the repair pass. This overwrites the same
-      # report so downstream nodes only need to read one final artifact.
+      # Re-run validation after the quality-repair pass. Same rules and
+      # same script as validate-generated-tests-1 — see that node for
+      # detail. The script overwrites the same report so downstream
+      # nodes only need to read one final artifact.
       set -euo pipefail
       export ARTIFACTS_DIR="$ARTIFACTS_DIR"
-      report="$ARTIFACTS_DIR/test-gen-quality-report.json"
-      lint_log="$ARTIFACTS_DIR/test-gen-lint.log"
-      typecheck_log="$ARTIFACTS_DIR/test-gen-typecheck.log"
-
-      if [ ! -f package.json ]; then
-        printf '{"passed":false,"lint":"failed","typecheck":"failed","reason":"missing package.json"}' > "$report"
-        cat "$report"
-        exit 0
-      fi
-
-      has_script() {
-        bun -e '
-          import { readFileSync } from "node:fs";
-          const pkg = JSON.parse(readFileSync("package.json", "utf8"));
-          process.exit(pkg.scripts?.[process.argv[1]] ? 0 : 1);
-        ' -- "$1"
-      }
-
-      lint_status="missing"
-      typecheck_status="missing"
-
-      if has_script lint; then
-        if npm run lint > "$lint_log" 2>&1; then
-          lint_status="passed"
-        else
-          lint_status="failed"
-        fi
-      else
-        printf 'Missing package.json script: lint\n' > "$lint_log"
-      fi
-
-      if has_script typecheck; then
-        if npm run typecheck > "$typecheck_log" 2>&1; then
-          typecheck_status="passed"
-        else
-          typecheck_status="failed"
-        fi
-      else
-        printf 'Missing package.json script: typecheck\n' > "$typecheck_log"
-      fi
-
-      if [ "$lint_status" = "passed" ] && [ "$typecheck_status" = "passed" ]; then
-        passed=true
-      else
-        passed=false
-      fi
-
-      printf '{"passed":%s,"lint":"%s","typecheck":"%s","lint_log":"%s","typecheck_log":"%s"}\n' \
-        "$passed" "$lint_status" "$typecheck_status" "$lint_log" "$typecheck_log" > "$report"
-      cat "$report"
+      bun /home/user/Archon/.archon/scripts/test-gen-validate.ts
 
   - id: verify-tests-exist
     depends_on: [ validate-generated-tests-1, validate-generated-tests-2 ]
