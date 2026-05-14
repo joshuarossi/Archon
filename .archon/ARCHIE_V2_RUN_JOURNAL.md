@@ -1648,3 +1648,114 @@ on the v3 backlog — important but not urgent. Until then,
 operators do scaffolding manually on each new project.
 
 
+
+---
+
+## Entry — 2026-05-14, 12:05 CDT — The Silent SKIP
+
+### Symptom
+
+WOR-100 task-implement finished `dev-attempt-1` and the reviewer signed
+off cleanly: "All blocking validation gates (lint, typecheck) passed."
+Josh asked why vitest wasn't mentioned. I checked
+`artifacts/runs/<runId>/test-results/attempt-1/` — only `lint.log` and
+`typecheck.log` were there. No `vitest.log`. The gate hadn't run.
+
+### Root cause
+
+`task-run-validation.sh` resolved its vitest scope via
+`find_ticket_dir tests` — case-insensitive lookup of
+`tests/<ISSUE_KEY>/`. Two days ago I merged PR #24, which changed the
+contract-author prompt to defer to the project's existing test
+convention (Clarity uses `tests/unit/`, not `tests/<TICKET>/`). I
+audited the contract-author emitter and the test-gen consumer that
+reads the contract. I never grepped the validator.
+
+So from WOR-95 onward, the per-ticket directory simply doesn't exist
+in any run. The validator's `[ -d "$VITEST_DIR" ]` branch falls into
+`skip_gate "vitest" "$VITEST_DIR/ does not exist"`. The skip is
+treated as "not blocking, not relevant" by `add_gate`, and the
+reviewer's prompt reads "all blocking gates passed" as true because
+the only gates with status `failed` are... none.
+
+Five tickets (WOR-95, 96, 97, 98, 99) merged to Clarity `main` without
+their unit tests being executed by the implement-stage validator. The
+tests *had* been generated correctly by the task-tests workflow earlier,
+but task-implement's job is to re-run them against the implementation
+and confirm green. That step never happened.
+
+### The damage
+
+Re-ran the suite manually on Clarity `main` after this discovery:
+
+- **WOR-95 (schema)**: ✅ all tests pass
+- **WOR-96 (stateMachine)**: ✅ all tests pass
+- **WOR-97 (auth)**: ❌ **12 of 12 tests fail** — every test that
+  imports from `convex/_generated/api` or `convex/_generated/dataModel`
+  errors at module load with "Could not find the _generated
+  directory." The implementation is correct; the generated dir is
+  gitignored and CI never runs `npx convex codegen` before vitest.
+- **WOR-98 (errors)**: ✅ all tests pass
+- **WOR-99 (prompts)**: ✅ all tests pass
+
+So WOR-97 is the only real merged-broken case, and not because the
+implementation is wrong — because of a separate gitignore problem that
+would have surfaced loudly if the validator had actually run vitest.
+The silent-skip masked the codegen issue too.
+
+### Josh's response — and the lesson
+
+> "WTF, YOU LITERALLY MADE THIS CHANGE, WHEN YOU MAKE A CHANGE SEE IF
+> IT AFFECTS THE REST OF THE PIPELINE."
+
+He's right. The lesson I had to write down — and saved as durable
+auto-memory — is:
+
+**Every pipeline-node change requires auditing the downstream
+consumers of its outputs/artifacts/paths.** Pipeline DAGs are wider
+than they look because bash nodes embed implicit consumers. Grep is
+not optional. "I changed an upstream prompt; let me check who reads
+the artifact it produces" should be the reflex, not a step I skip
+because the change looks self-contained.
+
+### The fix
+
+Two PRs:
+
+**Archon PR #25** (validator):
+- `VITEST_DIR=tests`, `PLAYWRIGHT_DIR=e2e` — scope to the whole tree,
+  not per-ticket. The cage in task-implement forbids the dev agent
+  from editing test files, so broader scope can't regress unrelated
+  tests; it only catches genuine implementation drift.
+- New `fail_gate` helper. Missing `tests/` is now FAIL, not SKIP.
+  Every task-implement ticket implies a unit-test artifact; a silent
+  SKIP let the gate disappear. Defense-in-depth so the next path
+  convention change can't silently re-introduce this bug.
+
+**Clarity PR #10** (project):
+- Commit `convex/_generated/` (remove from `.gitignore`). Vitest no
+  longer needs an implicit `npx convex codegen` pre-step to resolve
+  the `api`/`dataModel` imports. After this merges, WOR-97's tests go
+  from 0/12 to 12/12 retroactively. Convention: re-run codegen and
+  commit the diff whenever schema or function signatures change.
+
+### What I'm taking forward
+
+1. Auto-memory `feedback_pipeline_change_downstream_audit.md` saved
+   so future-me can't miss it. Indexed in `MEMORY.md`.
+2. The fail-not-skip pattern generalizes. Anywhere the pipeline has a
+   `if [ -d X ]; then run; else skip; fi` shape, ask: "Is missing X a
+   project misconfiguration that should fail, or a genuinely optional
+   path?" If the former, FAIL — silent SKIP is the worst of both
+   worlds.
+3. Clarity's pattern (gitignored `_generated`) is something other
+   Convex projects will hit too. If we ever generalize Archie beyond
+   Clarity, the "project needs to commit code-generated files that
+   tests import" guidance belongs in the project-bootstrap checklist,
+   not as folklore in this journal.
+
+### What we ship next
+
+Once both PRs merge: re-fire WOR-100 (it was abandoned mid-run when I
+discovered the bug). Then let the auto-sweep release the rest of the
+backlog one ticket at a time.
