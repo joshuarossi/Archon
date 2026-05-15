@@ -811,15 +811,53 @@ nodes:
       set -euo pipefail
       bash /home/user/Archon/.archon/scripts/task-run-validation.sh
 
+  # ─── Followup-bug path (retries exhausted) ──
+  # Fires when all three post-fix-validation attempts failed: the fixer
+  # kept tripping a deterministic problem. The draft node reads the
+  # synth findings + the latest failure log + the previous attempts and
+  # writes a Bug-ticket draft to disk; the filer node consumes the
+  # draft, creates the Bug in Jira (Action item from the parent),
+  # transitions it to SfD (fires bug-pipeline → task-implement), and
+  # comments on the parent PR. The parent PR then merges WITH the
+  # residual failure documented in the followup — see merge-pr's 4th
+  # `when:` branch below.
+  - id: draft-followup-bug
+    command: archon-draft-followup-bug
+    depends_on: [ parse-synthesis, post-fix-validation, post-fix-validation-2, post-fix-validation-3 ]
+    when: "$parse-synthesis.output.decision == 'changes_requested' &&
+      $post-fix-validation.output.passed == 'false' &&
+      $post-fix-validation-2.output.passed == 'false' &&
+      $post-fix-validation-3.output.passed == 'false'"
+    context: fresh
+    hooks:
+      PreToolUse:
+        - script: /home/user/Archon/.archon/scripts/archie-pretooluse-no-tests.ts
+          timeout: 30
+
+  - id: file-followup-bug
+    depends_on: [ draft-followup-bug ]
+    when: "$parse-synthesis.output.decision == 'changes_requested' &&
+      $post-fix-validation.output.passed == 'false' &&
+      $post-fix-validation-2.output.passed == 'false' &&
+      $post-fix-validation-3.output.passed == 'false'"
+    bash: |
+      set -euo pipefail
+      export ARTIFACTS_DIR="$ARTIFACTS_DIR"
+      export WORKFLOW_NAME="task-implement"
+      bun /home/user/Archon/.archon/scripts/task-file-followup-bug.ts
+
   # ─── Merge gate ──
-  # Three paths to merge (all rely on all_done so the gate fires whenever
-  # the upstream nodes reach terminal state, then `when:` picks the right
-  # branch):
-  #   1) Synthesizer approved on first read → no fixes, no validation.
-  #   2) Synthesizer requested changes → any of the three post-fix
-  #      validation attempts passed.
-  # If all three retries fail, merge-pr skips and flag-for-human-review
-  # fires (downstream node, gated on parse-synthesis.decision).
+  # Four paths to merge (all_done so the gate fires whenever upstream
+  # nodes reach terminal state, then `when:` picks the right branch):
+  #   1) Synthesizer approved → no fixes, no validation needed.
+  #   2-4) Synthesizer requested changes AND any of the three post-fix
+  #        validation attempts passed.
+  # When all three retries fail, merge-pr SKIPS — the parent PR stays
+  # open. draft-followup-bug + file-followup-bug filed a Bug ticket
+  # whose task-implement run reuses the parent's branch + PR, adds
+  # commits, and merges the combined work. The cascade in
+  # jira-task-done.ts then transitions the parent ticket to Done
+  # when the followup completes.
   - id: merge-pr
     depends_on: [ verify-pr-ready, parse-synthesis, implement-fixes, post-fix-validation, implement-fixes-2, post-fix-validation-2, implement-fixes-3, post-fix-validation-3 ]
     trigger_rule: all_done
@@ -863,23 +901,15 @@ nodes:
   # close and reset. This is the third terminal branch alongside
   # merge-pr (the merge path) and the implicit "validate-failed →
   # nothing runs" path.
-  # Fires in two cases:
-  #   a) decision == 'needs_human_review' (synth = NEEDS_DISCUSSION with no
-  #      auto-fix candidates — the genuine human-judgment case).
-  #   b) decision == 'changes_requested' AND all three post-fix-validation
-  #      attempts failed (fixer kept tripping a deterministic problem
-  #      the retry loop couldn't resolve).
-  # Both are "operator needed" terminal states. The script labels the
-  # ticket archon-needs-review and posts a structured Jira comment with
-  # the synth findings + the latest failure log.
+  # Fires only when the synthesizer decided NEEDS_DISCUSSION with no
+  # auto-fix candidates (decision == 'needs_human_review') — the
+  # genuine "synthesizer couldn't decide; human should choose" case.
+  # The previous "changes_requested + all 3 retries failed" branch is
+  # now handled autonomously by draft-followup-bug + file-followup-bug;
+  # this halt path stays narrow so the human-review label is rare.
   - id: flag-for-human-review
-    depends_on: [ parse-synthesis, verify-pr-ready, post-fix-validation, post-fix-validation-2, post-fix-validation-3 ]
-    trigger_rule: all_done
-    when: "$parse-synthesis.output.decision == 'needs_human_review' ||
-      $parse-synthesis.output.decision == 'changes_requested' &&
-      $post-fix-validation.output.passed == 'false' &&
-      $post-fix-validation-2.output.passed == 'false' &&
-      $post-fix-validation-3.output.passed == 'false'"
+    depends_on: [ parse-synthesis, verify-pr-ready ]
+    when: "$parse-synthesis.output.decision == 'needs_human_review'"
     bash: |
       set -euo pipefail
       export ARTIFACTS_DIR="$ARTIFACTS_DIR"

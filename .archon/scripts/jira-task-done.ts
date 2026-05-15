@@ -2,21 +2,28 @@
 /**
  * Handler for a non-Epic Jira issue transitioning to Done.
  *
- * Three responsibilities, in order:
+ * Four responsibilities, in order:
  *
  * 1. Remove this ticket's outward "blocks" links. Each outward Blocks link
  *    on this ticket means "this ticket blocks <other>"; deleting it
  *    automatically removes the matching inward "is blocked by" on <other>.
  *
- * 2. Sweep the whole project for Backlog non-Epic tickets that have zero
+ * 2. **Action-item cascade.** If this ticket has an outward "Action item"
+ *    link, it was filed as a followup that resolves a parent ticket's
+ *    residual failure. When it goes Done, the parent is now actually
+ *    complete (main has both the parent's PR and this followup's fix).
+ *    Transition the parent to Done — and SKIP the sweep-promote step
+ *    below, because the parent's own Done event will handle promoting
+ *    the next ticket. (If we ran sweep-promote here too, two tickets
+ *    would get promoted from one logical completion, breaking
+ *    PROMOTE_CAP=1's intent.)
+ *
+ * 3. Sweep the whole project for Backlog non-Epic tickets that have zero
  *    inward Blocks links remaining, and transition each to
  *    "Selected for Development" (which fires task-tests via jira-router).
- *    The sweep is project-scoped — we don't only re-promote the tickets
- *    we just unblocked. Anything Backlog with no blockers gets picked up,
- *    so unblocking via different mechanisms (human, parallel task-done
- *    runs) is also captured.
+ *    Skipped when step 2 cascaded.
  *
- * 3. If this ticket's parent Epic has zero remaining children that are
+ * 4. If this ticket's parent Epic has zero remaining children that are
  *    not Done, transition the Epic to Done.
  *
  * Reads:
@@ -27,6 +34,7 @@
  * Writes (stdout, JSON-only — narrative on stderr):
  *   {
  *     "outward_blocks_deleted": N,
+ *     "cascade_target": "WOR-102" | null,
  *     "tickets_promoted": [ "WOR-25", ... ],
  *     "epic_completed": "WOR-5" | null
  *   }
@@ -131,7 +139,134 @@ for (const link of outwardBlocks) {
   }
 }
 
-// 2. Sweep the project: find Backlog non-Epic tickets and promote any with
+// 2. Action-item cascade. If this ticket has an outward "Action item" link,
+//    it was filed as a followup that's responsible for unsticking a parent
+//    whose own task-implement run halted after 3 failed post-fix retries.
+//    Now that we're going Done, the residual fix is on main. Do what the
+//    operator would do by hand:
+//      a. Find the parent's open PR (branch convention: archon/task-<key-lc>).
+//      b. Squash-merge it.
+//      c. Transition the parent to Done.
+//    Then SKIP the sweep-promote below — the parent's own Done transition
+//    re-fires this handler (where it'll have no outward Action item link),
+//    and THAT run does the sweep-promote. Doing it here would double-promote.
+const outwardActionItem = (thisIssue.fields.issuelinks ?? []).find(
+  l => l.type.name === 'Action item' && l.outwardIssue !== undefined,
+);
+
+let cascadeTarget: string | null = null;
+let cascadeMergedPr: number | null = null;
+
+if (outwardActionItem?.outwardIssue?.key) {
+  const parentKey = outwardActionItem.outwardIssue.key;
+  cascadeTarget = parentKey;
+  const parentBranch = `archon/task-${parentKey.toLowerCase()}`;
+  log(`Action-item cascade: ${thisKey} is an action item from ${parentKey}.`);
+  log(`  Looking for parent's open PR on branch ${parentBranch}.`);
+
+  // a. Find the parent's open PR.
+  try {
+    const { stdout: nameWithOwner } = await execFileAsync(
+      'gh',
+      ['repo', 'view', '--json', 'nameWithOwner', '--jq', '.nameWithOwner'],
+      { cwd: process.cwd() },
+    );
+    const repo = nameWithOwner.trim();
+    const { stdout: prListJson } = await execFileAsync(
+      'gh',
+      [
+        'pr', 'list',
+        '--repo', repo,
+        '--head', parentBranch,
+        '--state', 'open',
+        '--json', 'number,url,state',
+      ],
+      { cwd: process.cwd() },
+    );
+    const prs = JSON.parse(prListJson) as Array<{ number: number; url: string; state: string }>;
+    if (prs.length === 0) {
+      log(`  ✗ No open PR found for parent branch ${parentBranch}. Falling through to normal sweep.`);
+    } else {
+      const parentPr = prs[0];
+      log(`  Found PR #${parentPr.number} (${parentPr.url}). Squash-merging.`);
+
+      // b. Squash-merge the parent's PR.
+      const { stdout: mergeOut } = await execFileAsync(
+        'gh',
+        ['pr', 'merge', String(parentPr.number), '--squash', '--delete-branch', '--repo', repo],
+        { cwd: process.cwd(), maxBuffer: 50 * 1024 * 1024 },
+      );
+      log(`  ${mergeOut.trim()}`);
+      cascadeMergedPr = parentPr.number;
+
+      // c. Transition the parent to Done. (This Done transition will re-fire
+      //    jira-task-done.ts — that run will see no outward Action item and
+      //    will do the normal sweep-promote.)
+      log(`  Transitioning ${parentKey} → Done.`);
+      const transitionRes = await jiraToolCall({
+        action: 'transitionIssue',
+        issueKey: parentKey,
+        toStatus: 'Done',
+      });
+      if (!transitionRes.ok) {
+        log(`  ✗ Parent transition failed: ${transitionRes.error}`);
+      } else {
+        await postWorkflowComment({
+          issueKey: parentKey,
+          level: 'info',
+          body: [
+            `🔁 **Auto-cascade from ${thisKey}.**`,
+            ``,
+            `${thisKey} was an Action item filed when this ticket's task-implement run failed three post-fix-validation retries. ${thisKey} merged its fix to main (PR #${cascadeMergedPr}), unsticking the path. This ticket's PR has now been squash-merged and the ticket transitioned to Done — same effect as if the original retries had succeeded.`,
+          ].join('\n'),
+          fields: {
+            cascade_from: thisKey,
+            parent_pr_merged: cascadeMergedPr,
+            cascade_at: new Date().toISOString(),
+          },
+        }).catch(() => undefined);
+      }
+
+      // Skip sweep-promote on THIS run; the parent's Done event handles it.
+      log(`  Cascade complete. Skipping sweep-promote on this run.`);
+      // Also skip Epic completion check — the parent's run will handle it.
+      const bodyLines = [
+        `Done handler ran on ${thisKey} (action-item cascade path).`,
+        ``,
+        `- Outward Blocks links deleted: **${deletedCount}**`,
+        `- Cascade target (parent): **${parentKey}**`,
+        `- Parent PR merged: **#${cascadeMergedPr}**`,
+        `- Sweep-promote: **skipped** (parent's Done event handles it)`,
+      ];
+      await postWorkflowComment({
+        issueKey: thisKey,
+        level: 'info',
+        body: bodyLines.join('\n'),
+        fields: {
+          outward_blocks_deleted: deletedCount,
+          cascade_target: parentKey,
+          parent_pr_merged: cascadeMergedPr,
+          sweep_promote_skipped: true,
+        },
+      }).catch(() => undefined);
+
+      process.stdout.write(
+        JSON.stringify({
+          outward_blocks_deleted: deletedCount,
+          cascade_target: parentKey,
+          parent_pr_merged: cascadeMergedPr,
+          tickets_promoted: [],
+          epic_completed: null,
+        }),
+      );
+      process.exit(0);
+    }
+  } catch (e) {
+    log(`  ✗ Cascade failed: ${(e as Error).message}. Falling through to normal sweep.`);
+  }
+}
+
+// 3. Sweep the project: find Backlog non-Epic tickets and promote any with
 //    zero inward Blocks links to Selected for Development.
 //
 // TEMPORARY WIP CAP: promote at most ONE ticket per Done event. Lifts
