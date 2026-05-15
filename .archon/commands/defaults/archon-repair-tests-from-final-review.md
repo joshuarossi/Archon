@@ -68,10 +68,16 @@ Forbidden:
 
 List the files you edited and which repair each edit addressed.
 
+## Phase 4: COMMIT
+
+Commit the test edits on the current branch. Working-tree-only
+changes are invisible to downstream nodes.
+
 ## Success Criteria
 
 - **REPAIRS_APPLIED**: Every `required_repairs[]` from
   `dev-review-final.json` is implemented.
 - **NO_PRODUCTION_EDITS**: Only test paths were modified.
 - **AC_COVERAGE_PRESERVED**: All ACs are still tested.
+- **COMMITTED**: The test edits are committed.
 
