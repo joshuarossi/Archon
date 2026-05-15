@@ -1,0 +1,36 @@
+{
+  "attempt": 3,
+  "issue_key": "WOR-102",
+  "overall": "passed",
+  "gates": [
+    {
+      "name": "lint",
+      "status": "passed",
+      "blocking": false,
+      "relevant_to_changed_files": false,
+      "log": "\n> clarity@0.1.0 lint\n> eslint .\n\n"
+    },
+    {
+      "name": "typecheck",
+      "status": "passed",
+      "blocking": false,
+      "relevant_to_changed_files": false,
+      "log": "\n> clarity@0.1.0 typecheck\n> tsc --noEmit\n\n"
+    },
+    {
+      "name": "vitest",
+      "status": "passed",
+      "blocking": true,
+      "relevant_to_changed_files": true,
+      "log": "\n RUN  v2.1.9 /home/user/.archon/workspaces/joshuarossi/Clarity/worktrees/archon/task-wor-102\n\n ✓ tests/unit/privacyFilter.test.ts (30 tests) 18ms\n ✓ tests/unit/prompts.test.ts (35 tests) 16ms\n ✓ tests/unit/theme-tokens.test.ts (100 tests) 43ms\n ✓ tests/unit/compression.test.ts (20 tests) 14ms\n ✓ tests/unit/stateMachine.test.ts (27 tests) 13ms\n ✓ tests/unit/auth.test.ts (12 tests) 46ms\n ✓ tests/unit/schema.test.ts (34 tests) 13ms\n ✓ tests/unit/errorHandler.test.ts (25 tests) 14ms\n ✓ tests/unit/errors.test.ts (41 tests) 16ms\n ✓ tests/unit/button.test.ts (13 tests) 9ms\n ✓ tests/unit/schema-types.test.ts (2 tests) 5ms\n ✓ tests/unit/vite-config.test.ts (3 tests) 43ms\n ✓ tests/smoke/runner.test.ts (2 tests) 32ms\n\n Test Files  13 passed (13)\n      Tests  344 passed (344)\n   Start at  01:54:19\n   Duration  1.39s (transform 438ms, setup 0ms, collect 1.02s, tests 281ms, environment 2ms, prepare 852ms)\n\n"
+    },
+    {
+      "name": "playwright",
+      "status": "skipped",
+      "blocking": false,
+      "relevant_to_changed_files": false,
+      "log": ""
+    }
+  ],
+  "generated_at": "2026-05-15T01:54:20.627Z"
+}

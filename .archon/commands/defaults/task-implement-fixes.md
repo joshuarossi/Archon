@@ -45,6 +45,34 @@ report and post the GitHub comment.
   these when consolidated lacks fix-level detail.
 - The current PR branch checkout.
 
+### Retry context (only present on retry attempts)
+
+If `$ARTIFACTS_DIR/review/fix-report.md` already exists when this
+command runs, you are on a **retry attempt**: a previous fix pass
+was made, but `post-fix-validation` (lint/typecheck/vitest) caught
+new failures. Treat this as a continuation, not a do-over.
+
+Read these *before* doing anything:
+
+- `$ARTIFACTS_DIR/review/fix-report.md` — your previous attempt's
+  summary. Tells you what was already changed and where.
+- `$ARTIFACTS_DIR/feedback.json` — the latest post-fix-validation
+  report. The `gates` array shows which gates passed and which
+  failed; the `log` field on each failing gate is the verbatim
+  tool output (lint errors, tsc errors, vitest failures).
+- `git log --oneline origin/main..HEAD` — the chain of commits
+  the previous attempt(s) pushed. Use `git show <hash>` to read
+  the diff if you need it.
+
+Your job on retry: fix the residual failures from `feedback.json`.
+The synthesizer's findings are still authoritative for "what
+should be true" — your previous fixes are still in place; do not
+revert them unless they were the cause of the residual failures.
+**The most common retry case is a small mechanical error in the
+previous fix** (a missing null guard, a closure-narrowing trip, a
+forgotten import). Look at the failure log first, then the
+related code, then apply the minimal correction.
+
 ---
 
 ## Workflow
@@ -66,6 +94,26 @@ cat "$ARTIFACTS_DIR/review/consolidated-review.md"
 ```
 
 Read each `*-findings.md` for full fix-level detail when needed.
+
+**On retry:** also read the previous attempt's report and the
+latest validation feedback:
+
+```bash
+# Only present if a previous fix attempt ran
+[ -f "$ARTIFACTS_DIR/review/fix-report.md" ] && cat "$ARTIFACTS_DIR/review/fix-report.md"
+
+# The latest post-fix-validation result — failing gates have logs here
+[ -f "$ARTIFACTS_DIR/feedback.json" ] && cat "$ARTIFACTS_DIR/feedback.json"
+
+# What commits the previous attempts already pushed
+git log --oneline origin/main..HEAD
+```
+
+If you are on a retry, your task is "make the failing gates in
+feedback.json pass without breaking the synthesizer findings the
+previous attempt already addressed." The synth findings remain
+authoritative; the validator failures are the new spec layered on
+top.
 
 ### 3. Categorize each finding
 

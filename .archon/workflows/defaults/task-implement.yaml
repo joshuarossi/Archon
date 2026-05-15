@@ -758,7 +758,7 @@ nodes:
         - script: /home/user/Archon/.archon/scripts/archie-pretooluse-no-tests.ts
           timeout: 30
 
-  # ─── Deterministic quality gate after fixes ──
+  # ─── Deterministic quality gate after fixes (attempt 1) ──
   # Re-runs lint/typecheck/vitest/playwright. Always exits 0; the JSON output's
   # `passed` field drives the merge gate's `when:` clause below.
   # Only runs when implement-fixes ran (which itself only runs when synthesizer
@@ -770,30 +770,72 @@ nodes:
       set -euo pipefail
       bash /home/user/Archon/.archon/scripts/task-run-validation.sh
 
+  # ─── Fix retry loop ──
+  # When the auto-fix's first attempt addresses the synth findings but trips
+  # lint/typecheck/vitest, we get two more attempts. Each retry reuses the
+  # task-implement-fixes command — its prompt reads the previous fix-report
+  # and the latest feedback.json, so the agent sees what was tried and what
+  # failed. Caps at 3 total attempts to bound cost; if all three fail,
+  # flag-for-human-review fires.
+  - id: implement-fixes-2
+    command: task-implement-fixes
+    depends_on: [ post-fix-validation ]
+    when: "$post-fix-validation.output.passed == 'false'"
+    context: fresh
+    hooks:
+      PreToolUse:
+        - script: /home/user/Archon/.archon/scripts/archie-pretooluse-no-tests.ts
+          timeout: 30
+
+  - id: post-fix-validation-2
+    depends_on: [ implement-fixes-2 ]
+    when: "$post-fix-validation.output.passed == 'false'"
+    bash: |
+      set -euo pipefail
+      bash /home/user/Archon/.archon/scripts/task-run-validation.sh
+
+  - id: implement-fixes-3
+    command: task-implement-fixes
+    depends_on: [ post-fix-validation-2 ]
+    when: "$post-fix-validation-2.output.passed == 'false'"
+    context: fresh
+    hooks:
+      PreToolUse:
+        - script: /home/user/Archon/.archon/scripts/archie-pretooluse-no-tests.ts
+          timeout: 30
+
+  - id: post-fix-validation-3
+    depends_on: [ implement-fixes-3 ]
+    when: "$post-fix-validation-2.output.passed == 'false'"
+    bash: |
+      set -euo pipefail
+      bash /home/user/Archon/.archon/scripts/task-run-validation.sh
+
   # ─── Merge gate ──
-  # Two paths to merge:
-  #   1) Synthesizer approved on first read → no fixes needed, no post-validation needed.
-  #      synthesize: succeeded, implement-fixes: skipped, post-fix-validation: skipped.
-  #   2) Synthesizer requested changes → fixes ran AND post-fix-validation succeeded.
-  #      synthesize: succeeded, implement-fixes: succeeded, post-fix-validation: succeeded.
-  #
-  # If post-fix-validation FAILED (real test failure after fixes), merge-pr's
-  # all_done + when clause keeps it from running because validation didn't
-  # succeed — neither path is satisfied.
+  # Three paths to merge (all rely on all_done so the gate fires whenever
+  # the upstream nodes reach terminal state, then `when:` picks the right
+  # branch):
+  #   1) Synthesizer approved on first read → no fixes, no validation.
+  #   2) Synthesizer requested changes → any of the three post-fix
+  #      validation attempts passed.
+  # If all three retries fail, merge-pr skips and flag-for-human-review
+  # fires (downstream node, gated on parse-synthesis.decision).
   - id: merge-pr
-    depends_on: [ verify-pr-ready, parse-synthesis, implement-fixes, post-fix-validation ]
+    depends_on: [ verify-pr-ready, parse-synthesis, implement-fixes, post-fix-validation, implement-fixes-2, post-fix-validation-2, implement-fixes-3, post-fix-validation-3 ]
     trigger_rule: all_done
-    # AND binds tighter than ||, so the gate reads as:
-    #   synth approved  OR  (synth requested changes AND post-fix passed)
-    # The bash itself guards against open-pr having been skipped (no
-    # pr-info.json on disk) — keeping that check in the consumer rather
-    # than the gate avoids duplicating `$open-pr.output.pr_number != ''`
-    # in every OR branch (Archon's condition evaluator has no parentheses).
+    # Archon's condition evaluator has no parentheses; AND binds tighter
+    # than OR, so each clause is a complete merge-eligible scenario:
     when: "$verify-pr-ready.output.ready == 'true' &&
       $parse-synthesis.output.decision == 'approve' ||
       $verify-pr-ready.output.ready == 'true' &&
       $parse-synthesis.output.decision == 'changes_requested' &&
-      $post-fix-validation.output.passed == 'true'"
+      $post-fix-validation.output.passed == 'true' ||
+      $verify-pr-ready.output.ready == 'true' &&
+      $parse-synthesis.output.decision == 'changes_requested' &&
+      $post-fix-validation-2.output.passed == 'true' ||
+      $verify-pr-ready.output.ready == 'true' &&
+      $parse-synthesis.output.decision == 'changes_requested' &&
+      $post-fix-validation-3.output.passed == 'true'"
     bash: |
       # Squash-merge the PR, delete the branch, post Jira confirmation.
       set -euo pipefail
@@ -821,9 +863,23 @@ nodes:
   # close and reset. This is the third terminal branch alongside
   # merge-pr (the merge path) and the implicit "validate-failed →
   # nothing runs" path.
+  # Fires in two cases:
+  #   a) decision == 'needs_human_review' (synth = NEEDS_DISCUSSION with no
+  #      auto-fix candidates — the genuine human-judgment case).
+  #   b) decision == 'changes_requested' AND all three post-fix-validation
+  #      attempts failed (fixer kept tripping a deterministic problem
+  #      the retry loop couldn't resolve).
+  # Both are "operator needed" terminal states. The script labels the
+  # ticket archon-needs-review and posts a structured Jira comment with
+  # the synth findings + the latest failure log.
   - id: flag-for-human-review
-    depends_on: [ parse-synthesis, verify-pr-ready ]
-    when: "$parse-synthesis.output.decision == 'needs_human_review'"
+    depends_on: [ parse-synthesis, verify-pr-ready, post-fix-validation, post-fix-validation-2, post-fix-validation-3 ]
+    trigger_rule: all_done
+    when: "$parse-synthesis.output.decision == 'needs_human_review' ||
+      $parse-synthesis.output.decision == 'changes_requested' &&
+      $post-fix-validation.output.passed == 'false' &&
+      $post-fix-validation-2.output.passed == 'false' &&
+      $post-fix-validation-3.output.passed == 'false'"
     bash: |
       set -euo pipefail
       export ARTIFACTS_DIR="$ARTIFACTS_DIR"

@@ -1,0 +1,36 @@
+{
+  "attempt": 1,
+  "issue_key": "WOR-102",
+  "overall": "failed",
+  "gates": [
+    {
+      "name": "lint",
+      "status": "passed",
+      "blocking": false,
+      "relevant_to_changed_files": false,
+      "log": "\n> clarity@0.1.0 lint\n> eslint .\n\n"
+    },
+    {
+      "name": "typecheck",
+      "status": "failed",
+      "blocking": false,
+      "relevant_to_changed_files": false,
+      "log": "\n> clarity@0.1.0 typecheck\n> tsc --noEmit\n\ntests/unit/errorHandler.test.ts(3,35): error TS2307: Cannot find module '../../src/lib/errorHandler' or its corresponding type declarations.\ntests/unit/errorHandler.test.ts(4,35): error TS2307: Cannot find module '../../src/lib/errorHandler' or its corresponding type declarations.\n"
+    },
+    {
+      "name": "vitest",
+      "status": "failed",
+      "blocking": true,
+      "relevant_to_changed_files": true,
+      "log": "\n RUN  v2.1.9 /home/user/.archon/workspaces/joshuarossi/Clarity/worktrees/archon/task-wor-102\n\n ✓ tests/unit/privacyFilter.test.ts (30 tests) 12ms\n ✓ tests/unit/prompts.test.ts (35 tests) 17ms\n ✓ tests/unit/theme-tokens.test.ts (100 tests) 47ms\n ✓ tests/unit/compression.test.ts (20 tests) 16ms\n ✓ tests/unit/stateMachine.test.ts (27 tests) 12ms\n ✓ tests/unit/auth.test.ts (12 tests) 45ms\n ❯ tests/unit/errorHandler.test.ts (0 test)\n ✓ tests/unit/schema.test.ts (34 tests) 12ms\n ✓ tests/unit/errors.test.ts (41 tests) 17ms\n ✓ tests/unit/button.test.ts (13 tests) 15ms\n ✓ tests/unit/schema-types.test.ts (2 tests) 4ms\n ✓ tests/unit/vite-config.test.ts (3 tests) 48ms\n ✓ tests/smoke/runner.test.ts (2 tests) 31ms\n\n⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯\n\n FAIL  tests/unit/errorHandler.test.ts [ tests/unit/errorHandler.test.ts ]\nError: Failed to load url ../../src/lib/errorHandler (resolved id: ../../src/lib/errorHandler) in /home/user/.archon/workspaces/joshuarossi/Clarity/worktrees/archon/task-wor-102/tests/unit/errorHandler.test.ts. Does the file exist?\n ❯ loadAndTransform node_modules/vitest/node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:51969:17\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯\n\n Test Files  1 failed | 12 passed (13)\n      Tests  319 passed (319)\n   Start at  01:43:48\n   Duration  1.38s (transform 372ms, setup 0ms, collect 934ms, tests 277ms, environment 2ms, prepare 879ms)\n\n"
+    },
+    {
+      "name": "playwright",
+      "status": "skipped",
+      "blocking": false,
+      "relevant_to_changed_files": false,
+      "log": ""
+    }
+  ],
+  "generated_at": "2026-05-15T01:43:49.670Z"
+}

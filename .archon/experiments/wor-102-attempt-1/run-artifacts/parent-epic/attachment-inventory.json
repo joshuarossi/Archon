@@ -1,0 +1,37 @@
+[
+  {
+    "id": "198116",
+    "filename": "02-TechSpec.md",
+    "contentType": "application/octet-stream",
+    "size": 41318,
+    "url": "https://alphapoint.atlassian.net/rest/api/3/attachment/content/198116"
+  },
+  {
+    "id": "198117",
+    "filename": "03-DesignDoc.md",
+    "contentType": "application/octet-stream",
+    "size": 37892,
+    "url": "https://alphapoint.atlassian.net/rest/api/3/attachment/content/198117"
+  },
+  {
+    "id": "198152",
+    "filename": "decomposition-plan.md",
+    "contentType": "application/octet-stream",
+    "size": 60260,
+    "url": "https://alphapoint.atlassian.net/rest/api/3/attachment/content/198152"
+  },
+  {
+    "id": "198118",
+    "filename": "STYLE_GUIDE.md",
+    "contentType": "application/octet-stream",
+    "size": 23397,
+    "url": "https://alphapoint.atlassian.net/rest/api/3/attachment/content/198118"
+  },
+  {
+    "id": "198119",
+    "filename": "style-guide.html",
+    "contentType": "text/html",
+    "size": 67630,
+    "url": "https://alphapoint.atlassian.net/rest/api/3/attachment/content/198119"
+  }
+]

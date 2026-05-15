@@ -1,0 +1,22 @@
+{
+  "passed": true,
+  "summary": "All blocking gates pass (lint, typecheck, vitest — 361 tests). The prior stale api.d.ts issue is resolved. All production files match contract signatures, exports, invariants, and acceptance criteria. The only deviation is main.tsx uses ConvexAuthProvider with client prop (single combined provider from @convex-dev/auth/react) instead of the explicit two-provider nesting (ConvexProvider → ConvexAuthProvider) specified in the contract — this is functionally equivalent and is the idiomatic @convex-dev/auth pattern, not a required repair.",
+  "why_previous_attempt_failed": "Prior attempt failed because convex/_generated/api.d.ts was stale — missing the users module entry needed for api.users.me to typecheck. This was resolved by adding the import and ApiFromModules entry for the users module (along with compression and privacyFilter). Typecheck now passes.",
+  "broken_contract": {
+    "file": "none",
+    "symbol": "none",
+    "issue": "No production contract is broken. All files, exports, signatures, queries, and invariants match the contract.",
+    "acceptance_criteria": []
+  },
+  "pattern_compatibility": {
+    "candidate_pattern": "ConvexAuthProvider with client prop from @convex-dev/auth/react (combines ConvexProvider + ConvexAuthProvider into a single component)",
+    "applies": true,
+    "reason": "The contract specifies explicit two-provider nesting: <ConvexProvider client={convex}> → <ConvexAuthProvider>. The implementation uses <ConvexAuthProvider client={convex}> which internally creates the ConvexProvider. This is the recommended @convex-dev/auth pattern and is functionally identical — useConvexAuth() and all Convex hooks work correctly because the combined provider establishes both contexts. The invariant that auth depends on the Convex client connection is preserved.",
+    "rejected_pattern": "none"
+  },
+  "required_repairs": [],
+  "acceptance_criteria_gaps": [],
+  "scope_violations": [],
+  "architecture_risks": [],
+  "test_gaming_risks": []
+}

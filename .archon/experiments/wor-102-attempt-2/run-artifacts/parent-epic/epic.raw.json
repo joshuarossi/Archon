@@ -1,0 +1,3237 @@
+{
+  "expand": "renderedFields,names,schema,operations,editmeta,changelog,versionedRepresentations",
+  "id": "288859",
+  "self": "https://alphapoint.atlassian.net/rest/api/3/issue/288859",
+  "key": "WOR-90",
+  "fields": {
+    "summary": "Clarity — v1",
+    "issuetype": {
+      "self": "https://alphapoint.atlassian.net/rest/api/3/issuetype/10005",
+      "id": "10005",
+      "description": "A big user story that needs to be broken down. Created by JIRA Software - do not edit or delete.",
+      "iconUrl": "https://alphapoint.atlassian.net/rest/api/2/universal_avatar/view/type/issuetype/avatar/10307?size=medium",
+      "name": "Epic",
+      "subtask": false,
+      "avatarId": 10307,
+      "hierarchyLevel": 1
+    },
+    "description": {
+      "type": "doc",
+      "version": 1,
+      "content": [
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 1
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "Clarity — Product Requirements Document"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "**Version 1.0 · May 2026 · Applied Labs (aplab.ai)**"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "---"
+            }
+          ]
+        },
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 2
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "1. Overview"
+            }
+          ]
+        },
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 3
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "1.1 Problem"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "Most interpersonal conflicts go unresolved — not from lack of goodwill, but because the moment parties try to talk, defensiveness and miscommunication hijack the conversation. Professional mediation works but is expensive (hundreds of dollars per hour), scheduled days out, and socially awkward to initiate. The result: people avoid the conversation, let resentment compound, or explode at the worst possible moment."
+            }
+          ]
+        },
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 3
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "1.2 Solution"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "**Clarity** is a web-based AI mediation tool that guides two parties through a structured, private, psychologically safe process to surface their real concerns, understand each other, and reach workable resolutions — without a human coach in the room."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The product sits between two people: it coaches each of them privately, synthesizes insights without leaking one party's words to the other, then facilitates a joint conversation in which a neutral AI mediator keeps things productive and on track. A private Draft Coach helps each party craft messages before sending, ensuring nothing inflammatory hits the joint chat."
+            }
+          ]
+        },
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 3
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "1.3 Goals for v1"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "1. Enable two real people to complete an end-to-end mediation with zero developer intervention. 2. Enforce absolute privacy: neither party ever sees the other's raw private content. 3. Ship a web app that a solo developer can run end-to-end locally in test mode. 4. Prove the Draft Coach interaction model (AI-guided, human-approved, never auto-sent). 5. Make AI behavior fully template-driven — no hardcoded prompts, all categories tunable by admins."
+            }
+          ]
+        },
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 3
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "1.4 Non-Goals for v1"
+            }
+          ]
+        },
+        {
+          "type": "bulletList",
+          "content": [
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Billing and subscriptions"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Organization / team accounts, multi-tenant RBAC"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Legal mediation workflows (e-signature, binding agreements)"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Native mobile apps (web-responsive only)"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Analytics / outcome dashboards"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Telegram or alternative channels (web-only for v1)"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Multi-party conflicts (3+ parties); v1 is strictly 2-party"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Voice or video mediation"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "RAG / semantic retrieval (revisit in v1.1+ if transcripts grow past context window)"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "---"
+            }
+          ]
+        },
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 2
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "2. Users & Personas"
+            }
+          ]
+        },
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 3
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "2.1 Primary Persona — \"The Initiator\" (Alex)"
+            }
+          ]
+        },
+        {
+          "type": "bulletList",
+          "content": [
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "**Who:** Adult in a stuck interpersonal conflict (coworker dispute, cofounder friction, family disagreement, roommate issue, contractual dispute with a freelancer, etc.)"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "**Context:** Has tried to address it directly and either can't start the conversation or had it go badly. Not ready to pay for a mediator; wants a private, low-stakes way to make progress."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "**Tech comfort:** Can use a web app; expects modern UX (magic-link login, mobile-responsive web)."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "**Motivation:** Wants resolution, not escalation. Wants to feel heard and to understand the other side."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "**Success:** Walks away with a concrete, mutually agreed next step and the feeling of having been fair."
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 3
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "2.2 Secondary Persona — \"The Invited Party\" (Jordan)"
+            }
+          ]
+        },
+        {
+          "type": "bulletList",
+          "content": [
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "**Who:** The other party in the conflict, invited via link."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "**Context:** May be skeptical at first (\"why are we using an AI for this?\"). Needs the tool to feel neutral and safe, not like Alex's tool."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "**Motivation:** Wants to be understood, not steamrolled. Needs to feel that the AI isn't taking sides."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "**Success:** Feels the process was fair and their perspective was heard in its own right."
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 3
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "2.3 Internal Persona — \"The Admin\" (Riley, at Applied Labs)"
+            }
+          ]
+        },
+        {
+          "type": "bulletList",
+          "content": [
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "**Who:** Product / operations person at Applied Labs managing AI prompt templates."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "**Motivation:** Tune the coaching quality per category (workplace, family, etc.) without shipping new code."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "**Success:** Can edit and version templates, see audit history, and publish changes safely (existing cases pinned to old versions continue unaffected)."
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "---"
+            }
+          ]
+        },
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 2
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "3. User Stories & Acceptance Criteria"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "User stories are prioritized **P0** (must ship), **P1** (should ship), **P2** (nice to have / can follow in v1.1)."
+            }
+          ]
+        },
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 3
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "3.1 Authentication & Account (P0)"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "**US-01 — Account creation** *As a new user, I want to create an account with my email so I can use the product without developer-only access.* **AC:**"
+            }
+          ]
+        },
+        {
+          "type": "bulletList",
+          "content": [
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "User can register with email via magic link OR Google OAuth."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "On registration, a User record is created in the backend."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Session persists across browser reloads until explicit logout or 30-day expiry."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "No password-based registration in v1 (magic link only reduces friction and eliminates password reset flows)."
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "**US-02 — Logout** *As a logged-in user, I want to log out so I can use shared devices safely.* **AC:**"
+            }
+          ]
+        },
+        {
+          "type": "bulletList",
+          "content": [
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Logout clears session client + server side."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Redirects to landing / login page."
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 3
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "3.2 Case Creation & Invite (P0)"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "**US-03 — Create a case** *As the initiator, I want to describe my conflict and invite the other party.* **AC:**"
+            }
+          ]
+        },
+        {
+          "type": "bulletList",
+          "content": [
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "User fills structured form: category (select), main topic (text, 1 sentence), description (text, multi-paragraph), desired outcome (text)."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Form selects a template (implicit: category → default template for that category; admin can override)."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "On submit, a Case record is created with status "
+                    },
+                    {
+                      "type": "text",
+                      "text": "DRAFT_PRIVATE_COACHING",
+                      "marks": [
+                        {
+                          "type": "code"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "text": " and an invite link is generated (unique, unguessable token, single-use)."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Initiator sees a screen with the invite link + copy button + \"how to share this\" guidance."
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "**US-04 — Accept an invite** *As the invited party, I want to click a link and join the case after creating my account.* **AC:**"
+            }
+          ]
+        },
+        {
+          "type": "bulletList",
+          "content": [
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Invite link routes to a landing page explaining what Clarity is."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "If not logged in, user can register / log in; invite token survives the auth flow."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Token consumption binds the invited party's User to the Case (role: "
+                    },
+                    {
+                      "type": "text",
+                      "text": "INVITEE",
+                      "marks": [
+                        {
+                          "type": "code"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "text": ")."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Token is marked "
+                    },
+                    {
+                      "type": "text",
+                      "text": "CONSUMED",
+                      "marks": [
+                        {
+                          "type": "code"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "text": " after use; reusing it fails with a clear error."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Invited party then fills their own case form (same shape as initiator's) — their entries are private to them."
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "**US-05 — Case lifecycle status visibility** *As either party, I want to see where my case is in the process.* **AC:**"
+            }
+          ]
+        },
+        {
+          "type": "bulletList",
+          "content": [
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Dashboard shows all cases for the logged-in user with current status and the other party's status (at phase-level only — e.g., \"Jordan has completed their private coaching\" — never content)."
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 3
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "3.3 Private Coaching (P0)"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "**US-06 — Private coaching conversation** *As a party, I want a confidential chat with an AI coach to help me articulate my position.* **AC:**"
+            }
+          ]
+        },
+        {
+          "type": "bulletList",
+          "content": [
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Each party has a private chat channel with the Private Coach (chat UI: stream messages, markdown rendering, typing indicator)."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "No template content is applied to the Private Coach — it is an open, general-purpose AI conversation."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Private Coach messages and user messages are stored and visible to that party only."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "User can end the private coaching phase explicitly (button: \"I'm ready for the joint session\"). This sets their per-party state to "
+                    },
+                    {
+                      "type": "text",
+                      "text": "PRIVATE_COACHING_COMPLETE",
+                      "marks": [
+                        {
+                          "type": "code"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "text": "."
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "**US-07 — Private coaching is truly private** *As a party, I want hard guarantees that nothing I said in private leaks.* **AC:**"
+            }
+          ]
+        },
+        {
+          "type": "bulletList",
+          "content": [
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Security test: a request for the other party's private transcript from any logged-in session returns 403 / not-found."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "The Coach AI, when called, never quotes or closely paraphrases the other party's raw input in any user-visible output (see §6 Privacy Model for enforcement details)."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "This rule is enforced at three layers: (1) prompt instruction, (2) server-side response filter, (3) UI never renders the other party's raw transcript."
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 3
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "3.4 AI Synthesis (P0)"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "**US-08 — Individualized pre-joint guidance** *As a party, after both private coaching sessions are complete, I want AI-generated guidance on how to approach the joint session.* **AC:**"
+            }
+          ]
+        },
+        {
+          "type": "bulletList",
+          "content": [
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "When both parties have marked private coaching complete, case moves to status "
+                    },
+                    {
+                      "type": "text",
+                      "text": "READY_FOR_JOINT",
+                      "marks": [
+                        {
+                          "type": "code"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "text": "."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "The system generates per-party synthesis: areas of likely agreement, genuine points of contention, suggested communication approaches."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Synthesis is derived from both parties' private content but surfaces no direct quotes or close paraphrases of the other party (see Privacy Model)."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Each party sees only their own synthesis."
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 3
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "3.5 Joint Chat & Coach (P0)"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "**US-09 — Enter the joint session** *As a party, I want to join the facilitated chat with the other party and the AI Coach.* **AC:**"
+            }
+          ]
+        },
+        {
+          "type": "bulletList",
+          "content": [
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "From the dashboard, each party can enter the Joint Chat once status is "
+                    },
+                    {
+                      "type": "text",
+                      "text": "READY_FOR_JOINT",
+                      "marks": [
+                        {
+                          "type": "code"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "text": "."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "The Coach AI posts an opening message grounded in the case's main topic."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Both parties can see each other's messages + the Coach's messages in real time (reactive updates, no refresh)."
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "**US-10 — Coach facilitates in real time** *As a party, I want the Coach to help keep the conversation productive.* **AC:**"
+            }
+          ]
+        },
+        {
+          "type": "bulletList",
+          "content": [
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Coach intervenes automatically on inflammatory content (detection via Claude call on new messages)."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Coach posts periodic summaries when new points of agreement emerge."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Parties can @-mention the Coach to request a specific intervention (\"Coach, can you summarize where we are?\")."
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "**US-11 — Resolution & case closure** *As a party, I want to formally close the case when we've reached resolution.* **AC:**"
+            }
+          ]
+        },
+        {
+          "type": "bulletList",
+          "content": [
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Either party can propose closure with a summary of agreed outcomes."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "The other party must confirm before case closes."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Closed cases transition to status "
+                    },
+                    {
+                      "type": "text",
+                      "text": "CLOSED_RESOLVED",
+                      "marks": [
+                        {
+                          "type": "code"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "text": " and become read-only."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Closed cases remain accessible on the dashboard."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "A party can also close unilaterally with "
+                    },
+                    {
+                      "type": "text",
+                      "text": "CLOSED_UNRESOLVED",
+                      "marks": [
+                        {
+                          "type": "code"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "text": " (walk-away); the other party is notified."
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 3
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "3.6 Draft Coach (P0)"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "**US-12 — Draft a message with AI help** *As a party in the joint chat, I want help crafting a message before I send it.* **AC:**"
+            }
+          ]
+        },
+        {
+          "type": "bulletList",
+          "content": [
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "In the joint chat, user can click \"Draft with Coach\" to open a private side panel."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Draft Coach engages in an exploratory back-and-forth (intent, tone, framing) — not a single-shot rewrite."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "When the user indicates readiness, Draft Coach produces a polished, ready-to-send draft."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "User can: send as-is, edit, continue refining with Coach, or discard."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "**Hard rule:** No message is sent to the joint chat without an explicit user \"Send\" click."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Draft Coach conversation is private to that user — invisible to the other party and invisible to the joint-chat Coach."
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 3
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "3.7 Solo Test Mode (P0)"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "**US-13 — Single-user solo mode** *As a developer / demo user, I want to play both parties in one session to test the flow end-to-end.* **AC:**"
+            }
+          ]
+        },
+        {
+          "type": "bulletList",
+          "content": [
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "A \"New Solo Case\" option on the dashboard creates a case with both "
+                    },
+                    {
+                      "type": "text",
+                      "text": "INITIATOR",
+                      "marks": [
+                        {
+                          "type": "code"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "text": " and "
+                    },
+                    {
+                      "type": "text",
+                      "text": "INVITEE",
+                      "marks": [
+                        {
+                          "type": "code"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "text": " bound to the same user."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "UI has a clear party-toggle affordance (top nav: \"Viewing as Alex / Viewing as Jordan\")."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "AI responses behave as if each party were separate (separate private coaching contexts)."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Solo cases are flagged distinctly in the database and UI to avoid confusion with real cases."
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 3
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "3.8 Template Management (P1)"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "**US-14 — Admin template CRUD** *As an admin, I want to create, edit, and version coaching templates by category.* **AC:**"
+            }
+          ]
+        },
+        {
+          "type": "bulletList",
+          "content": [
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Admin-only route ("
+                    },
+                    {
+                      "type": "text",
+                      "text": "/admin/templates",
+                      "marks": [
+                        {
+                          "type": "code"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "text": "), gated by a server-side "
+                    },
+                    {
+                      "type": "text",
+                      "text": "role: \"ADMIN\"",
+                      "marks": [
+                        {
+                          "type": "code"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "text": " check (not a client flag)."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Admin can create a new template: category, role (Coach / Draft Coach / both), global guidance, role-specific instructions."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Editing a published template creates a new version; the previous version is preserved."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Cases pin to a specific template version at creation and are unaffected by later edits."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Admin can archive templates (soft-delete); archived templates disappear from the category picker but remain resolvable by pinned cases."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Audit log records each create / publish / archive action with admin identity + timestamp."
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 3
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "3.9 Dashboard & Navigation (P0)"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "**US-15 — Dashboard** *As a user, I want to see all my active and closed cases at a glance.* **AC:**"
+            }
+          ]
+        },
+        {
+          "type": "bulletList",
+          "content": [
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Dashboard lists cases grouped by status (Active / Closed)."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Each row shows: other party name, category, created date, current status, last activity time."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Click → case detail view with phase-appropriate UI (private coaching, synthesis, joint chat, etc.)."
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 3
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "3.10 Nice-to-Haves (P2 — deferred unless time permits)"
+            }
+          ]
+        },
+        {
+          "type": "bulletList",
+          "content": [
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "**US-16:** Email notifications on state transitions (new invite, private coaching complete, new message in joint chat after 5-min quiet period)."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "**US-17:** Voluntary transcript sharing — a party can explicitly choose to share their own private coaching transcript with the other party (separate consent step, see Privacy Model §6.5)."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "**US-18:** Export / download case history as a PDF after closure."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "**US-19:** \"Coach, rephrase this\" inline tool in Draft Coach (one-shot rephrase without full conversation)."
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "---"
+            }
+          ]
+        },
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 2
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "4. Functional Requirements Summary"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "| # | Requirement | Priority | |---|-------------|----------| | FR-01 | Magic-link + Google OAuth authentication | P0 | | FR-02 | Case creation with structured form + invite link generation | P0 | | FR-03 | Invite link redemption tied to account creation/login | P0 | | FR-04 | Private coaching chat per party, fully isolated | P0 | | FR-05 | Phase-gated state machine (no skipping phases) | P0 | | FR-06 | AI Synthesis with no cross-party raw-content leakage | P0 | | FR-07 | Real-time joint chat with both parties + Coach | P0 | | FR-08 | Draft Coach with user-approval send gate | P0 | | FR-09 | Solo mode (one user playing both parties) | P0 | | FR-10 | Admin template CRUD with immutable versioning | P1 | | FR-11 | Case closure with confirmation + read-only archive | P0 | | FR-12 | Dashboard listing user's cases with phase visibility | P0 |"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "---"
+            }
+          ]
+        },
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 2
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "5. Non-Functional Requirements"
+            }
+          ]
+        },
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 3
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "5.1 Privacy & Security"
+            }
+          ]
+        },
+        {
+          "type": "bulletList",
+          "content": [
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "**Zero raw cross-party leakage.** Enforced at prompt layer, server response layer, database access control, and UI rendering (defense in depth)."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "**Encryption at rest and in transit.** Convex provides TLS + encrypted storage by default; no additional work needed for v1 but called out as a requirement."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "**Minimal PII.** We collect: email, optional display name. No phone, address, DOB."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "**Data retention.** Active and closed cases are retained indefinitely in v1; a user can request full deletion via support email (manual in v1, self-serve in v1.1)."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "**Audit logging** for admin actions (template CRUD) from day one."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "**HIPAA / SOC 2 posture.** Convex is HIPAA-compliant and SOC 2 Type II certified, giving a defensible baseline even though v1 is not marketed as HIPAA-covered."
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 3
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "5.2 Performance"
+            }
+          ]
+        },
+        {
+          "type": "bulletList",
+          "content": [
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "AI streaming: first token latency target < 2s for private coaching, < 3s for joint-chat Coach (acceptable due to Claude API latency + facilitation context size)."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Joint chat message propagation (user → other user's screen): target < 500ms (Convex reactive queries; in practice usually < 200ms)."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Dashboard load: < 1s to first meaningful paint."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Supports 50 concurrent active cases in v1 (more than enough for launch / beta)."
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 3
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "5.3 Reliability"
+            }
+          ]
+        },
+        {
+          "type": "bulletList",
+          "content": [
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "AI call retry on transient API failure: 1 retry with exponential backoff, then surface error to user with a \"Retry\" button (never silently fail)."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Messages persist before AI is called; if AI call fails, user message stays, AI response shows an error state that can be retried."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "No message loss under network failure; client reconnection reconciles state via Convex reactive queries."
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 3
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "5.4 Accessibility"
+            }
+          ]
+        },
+        {
+          "type": "bulletList",
+          "content": [
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "WCAG 2.1 AA target for v1."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Keyboard-navigable throughout (critical paths tested via Playwright with keyboard-only runs)."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Screen reader support for chat UIs (aria-live regions for incoming messages)."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Color contrast ≥ 4.5:1 for text."
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 3
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "5.5 Browser Support"
+            }
+          ]
+        },
+        {
+          "type": "bulletList",
+          "content": [
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Latest 2 versions of Chrome, Safari, Firefox, Edge."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Mobile Safari / Chrome on iOS 16+ / Android 12+."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "No IE, no Chrome < 100, no Safari < 15."
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 3
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "5.6 One-Shot Generatability"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The tech spec must be precise enough for Claude Code to generate the full app in a single run. This is treated as an NFR on the *spec itself*: no ambiguous state transitions, no aspirational API contracts, all schemas normative."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "---"
+            }
+          ]
+        },
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 2
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "6. Privacy Model (Requirement-Level)"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "This section defines the product's privacy behaviors as requirements; the tech spec defines enforcement mechanisms."
+            }
+          ]
+        },
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 3
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "6.1 Visibility Matrix"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "| Data | Visible To | |------|------------| | Party A's private coaching messages | Party A + Private Coach (AI) only | | Party B's private coaching messages | Party B + Private Coach (AI) only | | Each party's personal synthesis | Only that party | | Joint chat messages | Both parties + Coach (AI) | | Draft Coach conversation | Only the drafting party | | Templates (metadata) | Both parties (read-only), Admin (read-write) |"
+            }
+          ]
+        },
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 3
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "6.2 The \"AI as Privacy Boundary\" Principle"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The Coach AI has server-side access to both parties' content in order to be an informed neutral facilitator. However, the Coach's outputs must never quote or closely paraphrase the other party's raw private input. It synthesizes only."
+            }
+          ]
+        },
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 3
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "6.3 Enforcement Layers"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "1. **Prompt instruction layer** — system prompts contain explicit anti-quotation rules. 2. **Server response filter** — before emitting Coach output to either party, a lightweight validator (regex + embedding similarity) checks for near-verbatim strings from the other party's private transcript; if found, the response is regenerated. 3. **Database access control** — Convex functions enforce per-user visibility; no query returns another user's private transcript. 4. **UI layer** — client code never has access to the other party's private transcript, even transiently."
+            }
+          ]
+        },
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 3
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "6.4 No User-Facing Retrieval of Other Users' Data"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "There is no API endpoint, admin action, support action, or UI feature that allows one user to read another user's private coaching transcript. Full stop. Admin has no such capability either — templates and audit logs are the only admin surfaces."
+            }
+          ]
+        },
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 3
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "6.5 Voluntary Sharing (Deferred to v1.1)"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "A party may explicitly choose to share their *own* private transcript with the other party. This is a deliberate user action on their own data, with a confirmation step. Out of scope for v1."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "---"
+            }
+          ]
+        },
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 2
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "7. Success Metrics"
+            }
+          ]
+        },
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 3
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "7.1 Launch Criteria (must be true before opening to beta users)"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "1. Two real people can complete end-to-end mediation with no developer intervention. 2. Neither party can access the other's raw private data under any flow (verified via targeted Playwright security test). 3. Draft Coach never auto-sends (verified by Playwright and manual review). 4. Solo mode works end-to-end (verified by Playwright). 5. Admin can create, edit, version, and archive a template without breaking existing cases. 6. Clean-env setup: "
+            },
+            {
+              "type": "text",
+              "text": "git clone && npm install && npx convex dev && npm run dev",
+              "marks": [
+                {
+                  "type": "code"
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "text": " runs the full app. 7. Playwright suite passes 100% in CI."
+            }
+          ]
+        },
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 3
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "7.2 Beta Success Metrics (first 30 days of beta)"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "| Metric | Target | |--------|--------| | Case creation completion rate (started → invite sent) | > 70% | | Invite redemption rate (invite sent → invited party joins) | > 50% | | Private coaching completion (joined → marked complete) | > 60% | | Reach joint chat (both complete private coaching) | > 40% | | Reach resolution (joint chat → "
+            },
+            {
+              "type": "text",
+              "text": "CLOSED_RESOLVED",
+              "marks": [
+                {
+                  "type": "code"
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "text": ") | > 25% | | Median time from case creation to closure | < 7 days | | Draft Coach invocation rate in joint chat | > 40% of messages | | Zero privacy incidents | 100% | | User-reported NPS (post-closure survey) | > 30 |"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "These targets are intentionally modest — this is an unproven category and baseline attrition at each step will be high."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "---"
+            }
+          ]
+        },
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 2
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "8. Risks & Mitigations"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "| Risk | Likelihood | Impact | Mitigation | |------|------------|--------|------------| | AI leaks one party's wording to the other despite prompt rules | Medium | Severe (trust-breaking) | Defense in depth: prompt + server-side filter + audit sampling | | Invited party never joins (one-sided usage) | High | Moderate | Clear share messaging; in v1.1 add nudge emails; accept this as a funnel reality | | Coach AI gives advice that escalates rather than de-escalates | Medium | Severe | Template-driven prompts; conservative defaults; in-app \"Report this response\" button with internal review | | Users share traumatic content; AI must not harm | Medium | Severe | Safety guardrails in prompts; crisis-resource fallback card triggered on keyword heuristics; clear ToS stating not for crisis / abuse situations | | Convex vendor lock-in | Medium | Moderate | Convex backend is open-source and self-hostable; data exports possible | | Convex Auth is beta — unexpected auth bugs | Low | Moderate | Accepted for v1; can swap to Clerk without data model changes | | One-shot generation fails and spec needs rework | Medium | Moderate | Plan for spec iteration; don't bet the project on one-shot success | | Legal exposure from handling sensitive conflict content | Medium | High | Clear ToS: not a substitute for legal, therapy, or professional mediation; no binding outcomes; explicit \"not for abuse / safety situations\" language | | LLM API cost runs hot in joint chat (many turns) | Medium | Moderate | Use Haiku for lightweight classification (inflammatory detection), Sonnet for coaching; transcript compression; per-case budget cap with graceful degradation |"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "---"
+            }
+          ]
+        },
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 2
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "9. Release Plan"
+            }
+          ]
+        },
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 3
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "9.1 Phase 0 — Spec & Foundations (Week 0)"
+            }
+          ]
+        },
+        {
+          "type": "bulletList",
+          "content": [
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Complete tech spec and design doc"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Stand up Convex project, base schema, auth, empty React app"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "CI pipeline with lint + typecheck + Playwright placeholder"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 3
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "9.2 Phase 1 — Core Flow (Weeks 1–3)"
+            }
+          ]
+        },
+        {
+          "type": "bulletList",
+          "content": [
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Auth (magic link + Google OAuth)"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Case CRUD + invite flow"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Private coaching chat (single party working end-to-end)"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Dashboard with status"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Solo mode skeleton"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 3
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "9.3 Phase 2 — Joint Session (Weeks 4–5)"
+            }
+          ]
+        },
+        {
+          "type": "bulletList",
+          "content": [
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "AI synthesis"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Joint chat with real-time reactive updates"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Coach facilitator AI integration"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Draft Coach (including approval gate)"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Case closure flow"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 3
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "9.4 Phase 3 — Admin & Polish (Week 6)"
+            }
+          ]
+        },
+        {
+          "type": "bulletList",
+          "content": [
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Admin template CRUD + versioning"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Audit logging"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Accessibility pass"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Error states, loading states, empty states"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Playwright E2E coverage of critical paths"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 3
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "9.5 Phase 4 — Beta (Week 7+)"
+            }
+          ]
+        },
+        {
+          "type": "bulletList",
+          "content": [
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Internal dogfooding with real conflicts (Applied Labs team volunteers)"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Limited closed beta with 10–20 external users"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Iterate based on feedback"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Gate to public launch when Launch Criteria (§7.1) are fully met"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "---"
+            }
+          ]
+        },
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 2
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "10. Open Questions (to be resolved before or during Phase 1)"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "| # | Question | Owner | Decision-by | |---|----------|-------|-------------| | Q1 | Convex Auth (beta) vs. Clerk? | Eng lead | Before Phase 1 starts | | Q2 | Exact safety keyword / escalation heuristics for crisis situations | Product + Safety | Before Phase 2 | | Q3 | ToS copy, especially \"not for abuse / crisis\" language | Legal + Product | Before beta | | Q4 | Should the AI Coach have a name / persona, or stay generic \"Coach\"? | Product + Design | Before Phase 2 | | Q5 | Per-case AI cost cap value and what happens when hit | Eng + Finance | Before beta |"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "---"
+            }
+          ]
+        },
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 2
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "11. Appendix"
+            }
+          ]
+        },
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 3
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "11.1 Glossary"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "| Term | Definition | |------|------------| | Case | A single conflict mediation session between two parties | | Party | One participant in a case (Initiator or Invitee) | | Initiator | The party who created the case | | Invitee | The party invited via link | | Private Coach | The AI each party chats with privately during the private coaching phase | | Draft Coach | The AI that helps a party craft a joint-chat message before sending | | Coach | The neutral AI that participates in the joint chat visible to both parties | | Synthesis | Per-party AI-generated guidance after both private coaching sessions complete | | Template | A versioned configuration driving AI prompt behavior by category | | Template Version | Immutable snapshot of a template pinned to cases created when it was active | | Main Topic | Required framing step before private coaching: category + topic + template | | Solo Mode | Testing mode where one user plays both parties | | Phase / Status | Case lifecycle state (see state machine in tech spec §5) |"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "---"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "*Clarity · PRD v1.0 · Applied Labs · May 2026*"
+            }
+          ]
+        }
+      ]
+    },
+    "attachment": [
+      {
+        "self": "https://alphapoint.atlassian.net/rest/api/3/attachment/198116",
+        "id": "198116",
+        "filename": "02-TechSpec.md",
+        "author": {
+          "self": "https://alphapoint.atlassian.net/rest/api/3/user?accountId=557058%3A79991ae0-b539-4940-855a-29d9e6702754",
+          "accountId": "557058:79991ae0-b539-4940-855a-29d9e6702754",
+          "emailAddress": "josh.rossi@alphapoint.com",
+          "avatarUrls": {
+            "48x48": "https://avatar-management--avatars.us-west-2.prod.public.atl-paas.net/557058:79991ae0-b539-4940-855a-29d9e6702754/3aa1fb07-22e3-41db-8aee-b8cb2ab119d0/48",
+            "24x24": "https://avatar-management--avatars.us-west-2.prod.public.atl-paas.net/557058:79991ae0-b539-4940-855a-29d9e6702754/3aa1fb07-22e3-41db-8aee-b8cb2ab119d0/24",
+            "16x16": "https://avatar-management--avatars.us-west-2.prod.public.atl-paas.net/557058:79991ae0-b539-4940-855a-29d9e6702754/3aa1fb07-22e3-41db-8aee-b8cb2ab119d0/16",
+            "32x32": "https://avatar-management--avatars.us-west-2.prod.public.atl-paas.net/557058:79991ae0-b539-4940-855a-29d9e6702754/3aa1fb07-22e3-41db-8aee-b8cb2ab119d0/32"
+          },
+          "displayName": "Josh Rossi",
+          "active": true,
+          "timeZone": "GMT",
+          "accountType": "atlassian"
+        },
+        "created": "2026-05-13T18:58:56.878+0000",
+        "size": 41318,
+        "mimeType": "application/octet-stream",
+        "content": "https://alphapoint.atlassian.net/rest/api/3/attachment/content/198116"
+      },
+      {
+        "self": "https://alphapoint.atlassian.net/rest/api/3/attachment/198117",
+        "id": "198117",
+        "filename": "03-DesignDoc.md",
+        "author": {
+          "self": "https://alphapoint.atlassian.net/rest/api/3/user?accountId=557058%3A79991ae0-b539-4940-855a-29d9e6702754",
+          "accountId": "557058:79991ae0-b539-4940-855a-29d9e6702754",
+          "emailAddress": "josh.rossi@alphapoint.com",
+          "avatarUrls": {
+            "48x48": "https://avatar-management--avatars.us-west-2.prod.public.atl-paas.net/557058:79991ae0-b539-4940-855a-29d9e6702754/3aa1fb07-22e3-41db-8aee-b8cb2ab119d0/48",
+            "24x24": "https://avatar-management--avatars.us-west-2.prod.public.atl-paas.net/557058:79991ae0-b539-4940-855a-29d9e6702754/3aa1fb07-22e3-41db-8aee-b8cb2ab119d0/24",
+            "16x16": "https://avatar-management--avatars.us-west-2.prod.public.atl-paas.net/557058:79991ae0-b539-4940-855a-29d9e6702754/3aa1fb07-22e3-41db-8aee-b8cb2ab119d0/16",
+            "32x32": "https://avatar-management--avatars.us-west-2.prod.public.atl-paas.net/557058:79991ae0-b539-4940-855a-29d9e6702754/3aa1fb07-22e3-41db-8aee-b8cb2ab119d0/32"
+          },
+          "displayName": "Josh Rossi",
+          "active": true,
+          "timeZone": "GMT",
+          "accountType": "atlassian"
+        },
+        "created": "2026-05-13T18:58:59.290+0000",
+        "size": 37892,
+        "mimeType": "application/octet-stream",
+        "content": "https://alphapoint.atlassian.net/rest/api/3/attachment/content/198117"
+      },
+      {
+        "self": "https://alphapoint.atlassian.net/rest/api/3/attachment/198152",
+        "id": "198152",
+        "filename": "decomposition-plan.md",
+        "author": {
+          "self": "https://alphapoint.atlassian.net/rest/api/3/user?accountId=557058%3A79991ae0-b539-4940-855a-29d9e6702754",
+          "accountId": "557058:79991ae0-b539-4940-855a-29d9e6702754",
+          "emailAddress": "josh.rossi@alphapoint.com",
+          "avatarUrls": {
+            "48x48": "https://avatar-management--avatars.us-west-2.prod.public.atl-paas.net/557058:79991ae0-b539-4940-855a-29d9e6702754/3aa1fb07-22e3-41db-8aee-b8cb2ab119d0/48",
+            "24x24": "https://avatar-management--avatars.us-west-2.prod.public.atl-paas.net/557058:79991ae0-b539-4940-855a-29d9e6702754/3aa1fb07-22e3-41db-8aee-b8cb2ab119d0/24",
+            "16x16": "https://avatar-management--avatars.us-west-2.prod.public.atl-paas.net/557058:79991ae0-b539-4940-855a-29d9e6702754/3aa1fb07-22e3-41db-8aee-b8cb2ab119d0/16",
+            "32x32": "https://avatar-management--avatars.us-west-2.prod.public.atl-paas.net/557058:79991ae0-b539-4940-855a-29d9e6702754/3aa1fb07-22e3-41db-8aee-b8cb2ab119d0/32"
+          },
+          "displayName": "Josh Rossi",
+          "active": true,
+          "timeZone": "GMT",
+          "accountType": "atlassian"
+        },
+        "created": "2026-05-13T20:13:47.545+0000",
+        "size": 60260,
+        "mimeType": "application/octet-stream",
+        "content": "https://alphapoint.atlassian.net/rest/api/3/attachment/content/198152"
+      },
+      {
+        "self": "https://alphapoint.atlassian.net/rest/api/3/attachment/198118",
+        "id": "198118",
+        "filename": "STYLE_GUIDE.md",
+        "author": {
+          "self": "https://alphapoint.atlassian.net/rest/api/3/user?accountId=557058%3A79991ae0-b539-4940-855a-29d9e6702754",
+          "accountId": "557058:79991ae0-b539-4940-855a-29d9e6702754",
+          "emailAddress": "josh.rossi@alphapoint.com",
+          "avatarUrls": {
+            "48x48": "https://avatar-management--avatars.us-west-2.prod.public.atl-paas.net/557058:79991ae0-b539-4940-855a-29d9e6702754/3aa1fb07-22e3-41db-8aee-b8cb2ab119d0/48",
+            "24x24": "https://avatar-management--avatars.us-west-2.prod.public.atl-paas.net/557058:79991ae0-b539-4940-855a-29d9e6702754/3aa1fb07-22e3-41db-8aee-b8cb2ab119d0/24",
+            "16x16": "https://avatar-management--avatars.us-west-2.prod.public.atl-paas.net/557058:79991ae0-b539-4940-855a-29d9e6702754/3aa1fb07-22e3-41db-8aee-b8cb2ab119d0/16",
+            "32x32": "https://avatar-management--avatars.us-west-2.prod.public.atl-paas.net/557058:79991ae0-b539-4940-855a-29d9e6702754/3aa1fb07-22e3-41db-8aee-b8cb2ab119d0/32"
+          },
+          "displayName": "Josh Rossi",
+          "active": true,
+          "timeZone": "GMT",
+          "accountType": "atlassian"
+        },
+        "created": "2026-05-13T18:59:01.130+0000",
+        "size": 23397,
+        "mimeType": "application/octet-stream",
+        "content": "https://alphapoint.atlassian.net/rest/api/3/attachment/content/198118"
+      },
+      {
+        "self": "https://alphapoint.atlassian.net/rest/api/3/attachment/198119",
+        "id": "198119",
+        "filename": "style-guide.html",
+        "author": {
+          "self": "https://alphapoint.atlassian.net/rest/api/3/user?accountId=557058%3A79991ae0-b539-4940-855a-29d9e6702754",
+          "accountId": "557058:79991ae0-b539-4940-855a-29d9e6702754",
+          "emailAddress": "josh.rossi@alphapoint.com",
+          "avatarUrls": {
+            "48x48": "https://avatar-management--avatars.us-west-2.prod.public.atl-paas.net/557058:79991ae0-b539-4940-855a-29d9e6702754/3aa1fb07-22e3-41db-8aee-b8cb2ab119d0/48",
+            "24x24": "https://avatar-management--avatars.us-west-2.prod.public.atl-paas.net/557058:79991ae0-b539-4940-855a-29d9e6702754/3aa1fb07-22e3-41db-8aee-b8cb2ab119d0/24",
+            "16x16": "https://avatar-management--avatars.us-west-2.prod.public.atl-paas.net/557058:79991ae0-b539-4940-855a-29d9e6702754/3aa1fb07-22e3-41db-8aee-b8cb2ab119d0/16",
+            "32x32": "https://avatar-management--avatars.us-west-2.prod.public.atl-paas.net/557058:79991ae0-b539-4940-855a-29d9e6702754/3aa1fb07-22e3-41db-8aee-b8cb2ab119d0/32"
+          },
+          "displayName": "Josh Rossi",
+          "active": true,
+          "timeZone": "GMT",
+          "accountType": "atlassian"
+        },
+        "created": "2026-05-13T18:59:03.634+0000",
+        "size": 67630,
+        "mimeType": "text/html",
+        "content": "https://alphapoint.atlassian.net/rest/api/3/attachment/content/198119"
+      }
+    ],
+    "status": {
+      "self": "https://alphapoint.atlassian.net/rest/api/3/status/11421",
+      "description": "",
+      "iconUrl": "https://alphapoint.atlassian.net/",
+      "name": "Selected for Development",
+      "id": "11421",
+      "statusCategory": {
+        "self": "https://alphapoint.atlassian.net/rest/api/3/statuscategory/2",
+        "id": 2,
+        "key": "new",
+        "colorName": "blue-gray",
+        "name": "To Do"
+      }
+    }
+  }
+}

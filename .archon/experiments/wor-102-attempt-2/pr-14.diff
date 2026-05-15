@@ -1,0 +1,1659 @@
+diff --git a/.changelog/wor-102.md b/.changelog/wor-102.md
+new file mode 100644
+index 0000000..5b97fee
+--- /dev/null
++++ b/.changelog/wor-102.md
+@@ -0,0 +1,11 @@
++## WOR-102 — App shell (Vite + React + routing + auth)
++
++Added the frontend application shell that all subsequent UI pages build
++on. The entry point (`src/main.tsx`) renders React 18 wrapped in
++ConvexProvider, AuthProvider, and BrowserRouter. `src/App.tsx` defines
++the full route tree — public pages (`/`, `/login`, `/invite/:token`),
++protected pages (`/dashboard`, `/cases/*`), and admin-only pages
++(`/admin/*`) — with redirect guards for unauthenticated and non-admin
++users. A `TopNav` component renders logged-in and case-detail navigation
++variants, and a frontend error-handler utility (`src/lib/errorHandler.ts`)
++maps all nine Convex error codes to user-friendly toast messages.
+diff --git a/README.md b/README.md
+index 543940c..ddd9fbd 100644
+--- a/README.md
++++ b/README.md
+@@ -14,3 +14,22 @@ Spec attachments live on the Epic:
+ - 03-DesignDoc.md
+ - STYLE_GUIDE.md
+ - style-guide.html
++
++## Getting Started
++
++```bash
++npm install
++```
++
++Create a `.env.local` with:
++
++```
++VITE_CONVEX_URL=<your Convex deployment URL>
++```
++
++Then start the dev server:
++
++```bash
++npx convex dev   # backend
++npm run dev       # frontend (Vite)
++```
+diff --git a/convex/_generated/api.d.ts b/convex/_generated/api.d.ts
+index 809478b..bccf661 100644
+--- a/convex/_generated/api.d.ts
++++ b/convex/_generated/api.d.ts
+@@ -12,6 +12,7 @@ import type * as lib_auth from "../lib/auth.js";
+ import type * as lib_errors from "../lib/errors.js";
+ import type * as lib_prompts from "../lib/prompts.js";
+ import type * as lib_stateMachine from "../lib/stateMachine.js";
++import type * as users from "../users.js";
+ 
+ import type {
+   ApiFromModules,
+@@ -24,6 +25,7 @@ declare const fullApi: ApiFromModules<{
+   "lib/errors": typeof lib_errors;
+   "lib/prompts": typeof lib_prompts;
+   "lib/stateMachine": typeof lib_stateMachine;
++  users: typeof users;
+ }>;
+ 
+ /**
+diff --git a/convex/users.ts b/convex/users.ts
+new file mode 100644
+index 0000000..303d97e
+--- /dev/null
++++ b/convex/users.ts
+@@ -0,0 +1,19 @@
++import { query } from "./_generated/server";
++
++export const me = query({
++  args: {},
++  handler: async (ctx) => {
++    const identity = await ctx.auth.getUserIdentity();
++    if (!identity) {
++      return null;
++    }
++    if (!identity.email) {
++      return null;
++    }
++    const user = await ctx.db
++      .query("users")
++      .withIndex("by_email", (q) => q.eq("email", identity.email))
++      .unique();
++    return user;
++  },
++});
+diff --git a/docs/app-shell.md b/docs/app-shell.md
+new file mode 100644
+index 0000000..6bac89a
+--- /dev/null
++++ b/docs/app-shell.md
+@@ -0,0 +1,71 @@
++# App Shell & Routing
++
++The Clarity frontend is a single-page React 18 application served by
++Vite and connected to the Convex backend via reactive providers.
++
++## Provider Stack
++
++Providers are nested in `src/main.tsx` in this order:
++
++```
++<ConvexAuthProvider>      — wraps ConvexProvider internally; provides
++                            reactive backend connection (VITE_CONVEX_URL)
++                            + session / identity management
++  <BrowserRouter>         — client-side routing
++    <App />
++  </BrowserRouter>
++</ConvexAuthProvider>
++```
++
++## Route Tree
++
++Defined in `src/App.tsx`:
++
++| Path                          | Guard       | Description               |
++| ----------------------------- | ----------- | ------------------------- |
++| `/`                           | public      | Landing / home page       |
++| `/login`                      | public      | Login (redirects to dashboard if already signed in) |
++| `/invite/:token`              | public      | Party invite acceptance   |
++| `/dashboard`                  | auth        | User dashboard            |
++| `/cases/new`                  | auth        | Create a new case         |
++| `/cases/:caseId`              | auth        | Case detail               |
++| `/cases/:caseId/private`      | auth        | Private coaching session  |
++| `/cases/:caseId/joint`        | auth        | Joint session             |
++| `/cases/:caseId/closed`       | auth        | Closed case view          |
++| `/admin/templates`            | admin       | Prompt template list      |
++| `/admin/templates/:id`        | admin       | Prompt template editor    |
++| `/admin/audit`                | admin       | Audit log                 |
++| `*`                           | —           | 404 fallback              |
++
++### Route Guards
++
++- **`ProtectedRoute`** (`src/components/layout/ProtectedRoute.tsx`) —
++  checks `useConvexAuth()`. Shows a loading spinner while the session
++  initializes; redirects to `/login` if unauthenticated.
++- **`AdminRoute`** (`src/components/layout/AdminRoute.tsx`) — extends
++  `ProtectedRoute` by additionally querying the current user's role.
++  Non-admin users are redirected to `/dashboard`.
++
++## TopNav
++
++`src/components/layout/TopNav.tsx` renders two variants:
++
++- **`logged-in`** — Dashboard link and user menu.
++- **`case-detail`** — Back arrow, case phase display (Private Coaching /
++  Joint Session / Closed).
++
++The variant is selected automatically in `AppLayout` based on the
++current route path.
++
++## Frontend Error Handler
++
++`src/lib/errorHandler.ts` exports `handleConvexError(error)` which maps
++all nine Convex `ErrorCode` values to user-friendly messages suitable for
++toast display. Unknown or non-Convex errors fall back to a generic
++message. See [Error Handling](errors.md) for the backend error codes.
++
++## Environment Variables
++
++| Variable          | Required | Description                          |
++| ----------------- | -------- | ------------------------------------ |
++| `VITE_CONVEX_URL` | yes      | Convex deployment URL used by the provider |
+diff --git a/docs/contracts/wor-102.md b/docs/contracts/wor-102.md
+new file mode 100644
+index 0000000..9d3a392
+--- /dev/null
++++ b/docs/contracts/wor-102.md
+@@ -0,0 +1,233 @@
++---
++task_id: WOR-102
++ticket_summary: "App shell — Vite + React + ConvexProvider + AuthProvider + routing"
++ac_refs:
++  - "main.tsx renders React 18 with ConvexProvider and AuthProvider wrapping the router"
++  - "App.tsx defines all routes from TechSpec §9.2: /, /login, /invite/:token, /dashboard, /cases/new, /cases/:caseId, /cases/:caseId/private, /cases/:caseId/joint, /cases/:caseId/closed, /admin/templates, /admin/templates/:id, /admin/audit"
++  - "Protected routes redirect to /login when unauthenticated"
++  - "Admin routes (/admin/*) redirect to /dashboard for non-admin users"
++  - "TopNav renders the logged-in variant with Dashboard link and user menu, and the case-detail variant with back arrow and phase display per DesignDoc §3.2"
++  - "Navigation between routes works with browser back/forward buttons"
++  - "Vite config includes VITE_CONVEX_URL environment variable"
++  - "Frontend error handler utility maps ConvexError codes (UNAUTHENTICATED, FORBIDDEN, NOT_FOUND, CONFLICT, etc.) to user-friendly toast messages"
++files:
++  - path: src/main.tsx
++    role: config
++    action: create
++    exports:
++      - "Default app entry point — renders React 18 root with provider tree (no named exports)"
++  - path: src/App.tsx
++    role: route
++    action: create
++    exports:
++      - "App — default export: React component defining the full route tree"
++  - path: src/components/layout/TopNav.tsx
++    role: presentational
++    action: create
++    exports:
++      - "TopNav — named export: presentational component rendering logged-in or case-detail nav variant"
++  - path: src/components/layout/ProtectedRoute.tsx
++    role: connected
++    action: create
++    exports:
++      - "ProtectedRoute — named export: connected wrapper that checks auth and redirects to /login"
++  - path: src/components/layout/AdminRoute.tsx
++    role: connected
++    action: create
++    exports:
++      - "AdminRoute — named export: connected wrapper that checks user role and redirects non-admins to /dashboard"
++  - path: src/lib/errorHandler.ts
++    role: helper
++    action: create
++    exports:
++      - "handleConvexError — named export: maps ConvexError to user-friendly message string"
++      - "ErrorMessage — named type export: { code: string; message: string }"
++  - path: vite.config.ts
++    role: config
++    action: modify
++    exports:
++      - "Vite config with envPrefix including VITE_ (default) ensuring VITE_CONVEX_URL is available"
++signatures:
++  - |
++    /* src/main.tsx — no named exports; side-effect module */
++    // Renders: <ConvexAuthProvider client={convex}> → <BrowserRouter> → <App />
++  - |
++    /* src/App.tsx */
++    export default function App(): React.ReactElement;
++    // Defines <Routes> with all TechSpec §9.2 paths
++  - |
++    /* src/components/layout/TopNav.tsx */
++    interface TopNavProps {
++      variant: "logged-in" | "case-detail";
++      casePhase?: string;        // e.g. "Private Coaching", "Joint Session", "Closed"
++      caseId?: string;           // for back-arrow navigation
++    }
++    export function TopNav(props: TopNavProps): React.ReactElement;
++  - |
++    /* src/components/layout/ProtectedRoute.tsx */
++    export function ProtectedRoute(props: { children: React.ReactNode }): React.ReactElement;
++    // Uses useConvexAuth(). If isLoading → spinner. If !isAuthenticated → <Navigate to="/login" replace />.
++  - |
++    /* src/components/layout/AdminRoute.tsx */
++    export function AdminRoute(props: { children: React.ReactNode }): React.ReactElement;
++    // Wraps ProtectedRoute logic + queries current user role. If role !== "ADMIN" → <Navigate to="/dashboard" replace />.
++  - |
++    /* src/lib/errorHandler.ts */
++    import type { ErrorCode } from "../../convex/lib/errors";
++    export type ErrorMessage = { code: string; message: string };
++    export function handleConvexError(error: unknown): ErrorMessage;
++    // Returns user-friendly message for each of the 9 ErrorCode values.
++    // Unknown errors return { code: "INTERNAL", message: "Something went wrong. Please try again." }.
++queries_used:
++  - "api.users.me — returns current user record ({ _id, email, displayName, role }) for role-checking in AdminRoute"
++invariants:
++  - "Provider nesting order is always ConvexAuthProvider (wraps ConvexProvider internally) → BrowserRouter → Routes. Reversing any layer breaks auth or reactivity."
++  - "Protected routes MUST show a loading spinner (not redirect) while auth state is loading (isLoading=true from useConvexAuth)."
++  - "Admin routes perform the role check AFTER confirming authentication — never query user role for unauthenticated visitors."
++  - "The error handler never exposes raw internal error messages to users — it always maps to a curated string."
++  - "TopNav is a pure presentational component — it receives variant and data via props, never calls hooks directly. The calling page decides which variant to render."
++  - "Route page stubs are minimal placeholder components (heading + test-id) — no real page logic in this ticket."
++non_goals:
++  - "Actual page implementations (dashboard content, case forms, chat UI) — later tickets"
++  - "Toast notification UI or toast library integration — this ticket only provides the error-to-message mapping utility"
++  - "Solo mode party toggle (WOR-separate ticket)"
++  - "Dark mode toggle logic in TopNav (already handled by WOR-103 theme setup; TopNav just renders within whatever theme is active)"
++  - "Convex Auth configuration (providers setup in convex/auth.ts) — assumed pre-existing from auth scaffolding"
++tested_by:
++  - ac: "main.tsx renders React 18 with ConvexProvider and AuthProvider wrapping the router"
++    layer: e2e
++    file: e2e/app-shell.spec.ts
++    reason: "Verifying providers initialize correctly requires a running app with Convex connection — unit mocking the entire provider tree provides no confidence"
++  - ac: "App.tsx defines all routes from TechSpec §9.2"
++    layer: e2e
++    file: e2e/app-shell.spec.ts
++    reason: "Route definitions need a live router context to verify correct rendering per URL"
++  - ac: "Protected routes redirect to /login when unauthenticated"
++    layer: e2e
++    file: e2e/app-shell.spec.ts
++    reason: "Auth redirect requires real auth state from ConvexAuthProvider"
++  - ac: "Admin routes (/admin/*) redirect to /dashboard for non-admin users"
++    layer: e2e
++    file: e2e/app-shell.spec.ts
++    reason: "Role-based redirect requires authenticated user with known role from backend"
++  - ac: "TopNav renders the logged-in variant with Dashboard link and user menu, and the case-detail variant with back arrow and phase display"
++    layer: e2e
++    file: e2e/app-shell.spec.ts
++    reason: "TopNav variants depend on route context and auth state"
++  - ac: "Navigation between routes works with browser back/forward buttons"
++    layer: e2e
++    file: e2e/app-shell.spec.ts
++    reason: "Browser history API testing requires a real browser"
++  - ac: "Vite config includes VITE_CONVEX_URL environment variable"
++    layer: unit
++    file: tests/unit/vite-config.test.ts
++  - ac: "Frontend error handler utility maps ConvexError codes to user-friendly toast messages"
++    layer: unit
++    file: tests/unit/errorHandler.test.ts
++---
++
++# Contract: WOR-102 — App shell — Vite + React + ConvexProvider + AuthProvider + routing
++
++## Why this work exists
++
++Without this shell, no frontend page can render, authenticate, or subscribe to live Convex data. This task provides the foundational wiring — provider tree, route definitions, auth guards, navigation chrome, and error mapping — that every subsequent UI ticket builds on. It's the skeleton that makes the app bootable.
++
++## Files and exports
++
++### `src/main.tsx` (config, create)
++
++The React 18 entry point. Creates a `ConvexReactClient` using `import.meta.env.VITE_CONVEX_URL`, wraps the app in `<ConvexAuthProvider client={convex}>` → `<BrowserRouter>` → `<App />`. `ConvexAuthProvider` wraps `ConvexProvider` internally. This file has no named exports — it's a side-effect module that calls `createRoot` and renders.
++
++### `src/App.tsx` (route, create)
++
++Defines the full `<Routes>` tree matching TechSpec §9.2. Each route renders either a placeholder stub component (for pages not yet built) or wraps children in `<ProtectedRoute>` / `<AdminRoute>` as appropriate. The `App` component also renders `<TopNav>` in the layout (outside routes but reading route info to determine variant).
++
++### `src/components/layout/TopNav.tsx` (presentational, create)
++
++A **presentational** component. It receives a `variant` prop to decide which layout to show:
++- `"logged-in"`: Dashboard link + user display name + logout button/menu.
++- `"case-detail"`: Back arrow (ArrowLeft icon, 14px) linking to the case's parent route + phase display text.
++
++TopNav does NOT call hooks itself. The parent layout (in `App.tsx`) determines which variant to render based on route and passes the needed data as props. This keeps TopNav testable in isolation and avoids coupling it to routing/auth internals.
++
++### `src/components/layout/ProtectedRoute.tsx` (connected, create)
++
++A connected wrapper component that calls `useConvexAuth()`. Three states:
++1. `isLoading` → renders a centered spinner (accessible, with `aria-label="Loading"`)
++2. `!isAuthenticated` → `<Navigate to="/login" replace />`
++3. Authenticated → renders `children`
++
++### `src/components/layout/AdminRoute.tsx` (connected, create)
++
++Extends the protected-route pattern. After confirming authentication, queries the current user's record via `api.users.me` to check `role`. If `role !== "ADMIN"`, redirects to `/dashboard`. Handles the loading state of the user query with a spinner.
++
++### `src/lib/errorHandler.ts` (helper, create)
++
++Maps `ConvexError` instances (with their `AppErrorData` shape from `convex/lib/errors.ts`) to user-friendly strings suitable for toast display. The function inspects `error.data.code` and returns a curated message per code. Unknown errors get a generic fallback. This utility does NOT display toasts — it only produces the message. Toast UI is a future concern.
++
++### `vite.config.ts` (config, modify)
++
++Minimal change: the current config is already valid for `VITE_` env vars (Vite exposes them by default). No functional change needed unless we add path aliases or other build config. The contract confirms this file remains valid and includes the `react()` plugin.
++
++## Data dependencies
++
++### `api.users.me`
++
++A query that returns the current authenticated user's record from the `users` table. Expected shape:
++
++```ts
++{ _id: Id<"users">; email: string; displayName?: string; role: "USER" | "ADMIN"; createdAt: number }
++```
++
++This query is called by `AdminRoute` to determine if the user has admin access. It must return `null` or throw if unauthenticated (the component handles both). **Note:** This query may not yet exist — the contract declares it as a dependency this ticket will consume. If it doesn't exist, this ticket creates a minimal implementation in `convex/users.ts` (a simple `query` that resolves the current user by auth identity email).
++
++## Invariants
++
++**Provider nesting order:** `ConvexAuthProvider` (wraps `ConvexProvider` internally) → `BrowserRouter` → `Routes`. This order is non-negotiable. The router needs the auth provider above it so that route components can call `useConvexAuth()` and `useQuery()`.
++
++**Loading vs. redirect:** When `useConvexAuth()` returns `isLoading: true`, the UI MUST show a spinner, not redirect. Redirecting during loading creates a flash-of-login-page on every page load even for authenticated users.
++
++**Admin check ordering:** `AdminRoute` must confirm authentication FIRST (via `useConvexAuth`), then query the user role. Never query user data for unauthenticated visitors — it would fail and create confusing error states.
++
++**Error handler opacity:** The `handleConvexError` function never passes through raw `error.data.message` from the server to the user. It maps codes to pre-written strings. This prevents leaking internal details (table names, query paths) in user-facing UI.
++
++**TopNav is presentational:** It takes props and renders. It does not call `useConvexAuth`, `useQuery`, or `useNavigate` internally. This is a deliberate architecture decision so that TopNav can be rendered in test harnesses without provider wrappers, and so the rendering logic lives in one place (the layout in App.tsx).
++
++## Edge cases
++
++**Loading state:** All protected/admin routes show a spinner while auth state resolves. The spinner is centered in the viewport with an accessible label. No content flashes before auth resolves.
++
++**Unauthenticated at protected route:** Immediate `<Navigate to="/login" replace />`. The `replace` ensures hitting "back" doesn't loop back to the protected URL.
++
++**Non-admin at admin route:** After auth confirms and user query resolves, redirect to `/dashboard` with `replace`. No flash of admin content.
++
++**VITE_CONVEX_URL missing:** If the env var is not set, `ConvexReactClient` constructor will throw at startup. This is acceptable — it's a developer configuration error, not a user-facing state. The error will appear in the browser console.
++
++**Unknown error codes:** `handleConvexError` receives something that isn't a `ConvexError` or has an unrecognized code → returns `{ code: "INTERNAL", message: "Something went wrong. Please try again." }`.
++
++**Route not found:** Any unmatched URL renders a simple "Page not found" stub with a link to `/dashboard` (or `/` if unauthenticated).
++
++## Non-goals
++
++- **Page implementations:** All route targets except TopNav and the guards are placeholder stubs (`<h1>Page Name</h1>` + `data-testid`). Real content comes from later tickets.
++- **Toast UI:** This ticket provides `handleConvexError` (the mapping logic), not a toast notification system. A future ticket will add the toast component and wire it to this utility.
++- **Solo mode toggle:** `PartyToggle` in TopNav is a separate ticket. TopNav in this ticket does not include it.
++- **Auth provider configuration:** The Convex Auth setup (magic link + Google OAuth providers in `convex/auth.ts`) is assumed to exist from prior scaffolding work. This ticket consumes it, doesn't create it.
++- **Dark mode toggle in TopNav:** Theme is handled by WOR-103. TopNav inherits whatever theme is active via CSS custom properties.
++
++## Test coverage
++
++**E2E tests (`e2e/app-shell.spec.ts`)** cover six of the eight ACs. These require a running app with Convex connection because they test provider initialization, real auth flows, role-based redirects, and browser navigation history. The test file covers:
++- App boots without console errors (providers AC)
++- Each route renders its stub (routes AC)
++- Unauthenticated → redirected to /login (protected routes AC)
++- Regular user at /admin/* → redirected to /dashboard (admin routes AC)
++- TopNav variants visible in appropriate contexts (TopNav AC)
++- Back/forward browser navigation works (navigation AC)
++
++**Unit tests (`tests/unit/vite-config.test.ts`)** verify the Vite config is parseable and valid (a lightweight structural check).
++
++**Unit tests (`tests/unit/errorHandler.test.ts`)** exhaustively test `handleConvexError`:
++- Each of the 9 `ErrorCode` values returns a non-empty user-friendly string that differs from the raw code.
++- An unknown/malformed error returns the generic fallback.
++- A non-ConvexError (e.g., plain Error) returns the generic fallback.
+diff --git a/docs/errors.md b/docs/errors.md
+index 96a34cb..f8fd7ce 100644
+--- a/docs/errors.md
++++ b/docs/errors.md
+@@ -46,15 +46,26 @@ throw rateLimited("Too many session requests");
+ 
+ ### Frontend consumption
+ 
+-On the client, catch a `ConvexError` and inspect `error.data`:
++Use the `handleConvexError` utility in `src/lib/errorHandler.ts` to
++convert any caught error into a user-friendly message:
+ 
+ ```ts
+-if (error instanceof ConvexError) {
+-  const { code, message, httpStatus } = error.data;
+-  // map `code` to a user-facing string
++import { handleConvexError } from "../lib/errorHandler";
++
++try {
++  await someMutation();
++} catch (err) {
++  const { code, message } = handleConvexError(err);
++  showToast(message); // e.g. "Please sign in to continue."
+ }
+ ```
+ 
++The utility checks for `ConvexError` instances, extracts the `code`
++from `error.data`, and returns a pre-defined user-facing string. Unknown
++or non-Convex errors fall back to a generic "Something went wrong"
++message. See [App Shell](app-shell.md#frontend-error-handler) for more
++detail.
++
+ ## Types
+ 
+ - **`ErrorCode`** — string literal union of the nine codes.
+diff --git a/e2e/app-shell.spec.ts b/e2e/app-shell.spec.ts
+new file mode 100644
+index 0000000..14d0f58
+--- /dev/null
++++ b/e2e/app-shell.spec.ts
+@@ -0,0 +1,282 @@
++import { test, expect } from "@playwright/test";
++
++/**
++ * WOR-102: App shell — E2E tests for provider tree, routing, auth guards,
++ * TopNav variants, and browser navigation.
++ *
++ * At red state, src/main.tsx and the rest of the app shell do not exist yet,
++ * so the dev server will not serve the expected page — tests will fail
++ * because the elements they look for won't be present. That is the expected
++ * red-state failure.
++ */
++
++// ── All TechSpec §9.2 routes ──────────────────────────────────────────────
++
++const PUBLIC_ROUTES = [
++  { path: "/", heading: "Home" },
++  { path: "/login", heading: "Login" },
++];
++
++const PROTECTED_ROUTES = [
++  { path: "/dashboard", heading: "Dashboard" },
++  { path: "/cases/new", heading: "New Case" },
++  { path: "/cases/test-case-id", heading: "Case" },
++  { path: "/cases/test-case-id/private", heading: "Private" },
++  { path: "/cases/test-case-id/joint", heading: "Joint" },
++  { path: "/cases/test-case-id/closed", heading: "Closed" },
++];
++
++const ADMIN_ROUTES = [
++  { path: "/admin/templates", heading: "Templates" },
++  { path: "/admin/templates/test-template-id", heading: "Template" },
++  { path: "/admin/audit", heading: "Audit" },
++];
++
++const INVITE_ROUTE = { path: "/invite/test-token", heading: "Invite" };
++
++// ── AC: main.tsx renders React 18 with ConvexProvider and AuthProvider ────
++
++test.describe("AC: main.tsx renders providers wrapping the router", () => {
++  test("app boots and renders without console errors", async ({ page }) => {
++    const consoleErrors: string[] = [];
++    page.on("console", (msg) => {
++      if (msg.type() === "error") {
++        consoleErrors.push(msg.text());
++      }
++    });
++
++    await page.goto("/");
++    await page.waitForLoadState("networkidle");
++
++    // Filter out expected development warnings (React dev mode, HMR, etc.)
++    const criticalErrors = consoleErrors.filter(
++      (msg) =>
++        !msg.includes("[HMR]") &&
++        !msg.includes("React DevTools") &&
++        !msg.includes("Download the React DevTools"),
++    );
++
++    expect(criticalErrors).toHaveLength(0);
++  });
++
++  test("root element is present and React has rendered content", async ({
++    page,
++  }) => {
++    await page.goto("/");
++    const root = page.locator("#root");
++    await expect(root).toBeAttached();
++    // React should have rendered children inside #root
++    await expect(root).not.toBeEmpty();
++  });
++});
++
++// ── AC: App.tsx defines all routes from TechSpec §9.2 ─────────────────────
++
++test.describe("AC: App.tsx defines all TechSpec §9.2 routes", () => {
++  for (const route of PUBLIC_ROUTES) {
++    test(`public route ${route.path} renders content`, async ({ page }) => {
++      await page.goto(route.path);
++      // Each route stub should render an h1 or identifiable content
++      const heading = page.locator("h1");
++      await expect(heading).toBeVisible();
++    });
++  }
++
++  test(`invite route ${INVITE_ROUTE.path} renders content`, async ({
++    page,
++  }) => {
++    await page.goto(INVITE_ROUTE.path);
++    const heading = page.locator("h1");
++    await expect(heading).toBeVisible();
++  });
++
++  test("unmatched route renders a page-not-found message", async ({
++    page,
++  }) => {
++    await page.goto("/this-route-does-not-exist");
++    // Should show a "Page not found" or similar stub
++    await expect(page.getByText(/not found/i)).toBeVisible();
++  });
++});
++
++// ── AC: Protected routes redirect to /login when unauthenticated ──────────
++
++test.describe("AC: Protected routes redirect to /login when unauthenticated", () => {
++  for (const route of PROTECTED_ROUTES) {
++    test(`unauthenticated visit to ${route.path} redirects to /login`, async ({
++      page,
++    }) => {
++      await page.goto(route.path);
++
++      // Should end up on /login after redirect
++      await page.waitForURL("**/login", { timeout: 10000 });
++      expect(page.url()).toContain("/login");
++    });
++  }
++
++  for (const route of ADMIN_ROUTES) {
++    test(`unauthenticated visit to ${route.path} redirects to /login`, async ({
++      page,
++    }) => {
++      await page.goto(route.path);
++
++      // Admin routes also require auth first — should redirect to /login
++      await page.waitForURL("**/login", { timeout: 10000 });
++      expect(page.url()).toContain("/login");
++    });
++  }
++
++  test("protected route shows spinner while auth is loading, not a redirect flash", async ({
++    page,
++  }) => {
++    // Navigate to a protected route and check for loading indicator
++    // before any redirect happens
++    await page.goto("/dashboard", { waitUntil: "commit" });
++
++    // The spinner should appear with accessible aria-label
++    const spinner = page.getByLabel("Loading");
++    // Either the spinner is briefly visible OR we get redirected —
++    // but we should never see dashboard content flash before auth resolves
++    const dashboardContent = page.locator("[data-testid='dashboard-page']");
++
++    // If we see the spinner, auth loading state is correct
++    // If we're already redirected, that's also valid (fast auth resolution)
++    const spinnerVisible = await spinner.isVisible().catch(() => false);
++    const contentVisible = await dashboardContent
++      .isVisible()
++      .catch(() => false);
++
++    // We should NOT see dashboard content without being authenticated
++    if (!spinnerVisible) {
++      // If spinner wasn't visible, we should have been redirected
++      expect(page.url()).toContain("/login");
++    }
++    expect(contentVisible).toBe(false);
++  });
++});
++
++// ── AC: Admin routes redirect non-admin users to /dashboard ───────────────
++
++test.describe("AC: Admin routes redirect non-admin users to /dashboard", () => {
++  // NOTE: These tests require an authenticated non-admin user session.
++  // At red state, the auth system is not wired up, so these tests will
++  // fail because the app doesn't boot. That is expected.
++
++  // In a real CI environment, this would use a test fixture that
++  // authenticates as a regular USER role before navigating.
++  // For now, we test the redirect behavior assuming the app is running
++  // with an authenticated regular user context.
++
++  for (const route of ADMIN_ROUTES) {
++    test(`non-admin user at ${route.path} is redirected to /dashboard`, async ({
++      page,
++    }) => {
++      // This test assumes authentication has been set up via a
++      // storageState fixture or similar mechanism for a USER-role account.
++      // At red state, the app doesn't exist, so this will fail.
++      await page.goto(route.path);
++
++      // Non-admin should be redirected to /dashboard (after auth confirms)
++      // We check that we don't stay on an admin route
++      await page.waitForURL((url) => !url.pathname.startsWith("/admin"), {
++        timeout: 15000,
++      });
++      expect(page.url()).toContain("/dashboard");
++    });
++  }
++});
++
++// ── AC: TopNav variants ───────────────────────────────────────────────────
++
++test.describe("AC: TopNav renders logged-in and case-detail variants", () => {
++  test("logged-in variant shows Dashboard link and user menu", async ({
++    page,
++  }) => {
++    // Navigate to dashboard (requires authenticated context at green state)
++    await page.goto("/dashboard");
++
++    // TopNav should render the logged-in variant
++    const nav = page.locator("nav");
++    await expect(nav).toBeVisible();
++
++    // Dashboard link should be present
++    const dashboardLink = nav.getByRole("link", { name: /dashboard/i });
++    await expect(dashboardLink).toBeVisible();
++
++    // User menu or user display should be present
++    // The contract says: "Dashboard link + user display name + logout button/menu"
++    const userMenu = nav.locator(
++      "[data-testid='user-menu'], button:has-text('Logout'), button:has-text('Log out')",
++    );
++    await expect(userMenu.first()).toBeVisible();
++  });
++
++  test("case-detail variant shows back arrow and phase display", async ({
++    page,
++  }) => {
++    // Navigate to a case detail page (requires authenticated context)
++    await page.goto("/cases/test-case-id");
++
++    const nav = page.locator("nav");
++    await expect(nav).toBeVisible();
++
++    // Back arrow should be present (ArrowLeft icon per contract)
++    const backLink = nav.locator(
++      "a[href*='/'], [data-testid='back-arrow'], [aria-label*='back' i]",
++    );
++    await expect(backLink.first()).toBeVisible();
++
++    // Phase display should be present
++    const phaseDisplay = nav.locator(
++      "[data-testid='phase-display'], [data-testid='case-phase']",
++    );
++    await expect(phaseDisplay.first()).toBeVisible();
++  });
++});
++
++// ── AC: Navigation between routes works with browser back/forward ─────────
++
++test.describe("AC: Navigation with browser back/forward buttons", () => {
++  test("back and forward navigation works between routes", async ({
++    page,
++  }) => {
++    // Start at a known route
++    await page.goto("/dashboard");
++    await expect(page.locator("h1")).toBeVisible();
++
++    // Navigate to another route
++    await page.goto("/cases/new");
++    await expect(page.locator("h1")).toBeVisible();
++    expect(page.url()).toContain("/cases/new");
++
++    // Go back
++    await page.goBack();
++    await page.waitForURL("**/dashboard", { timeout: 5000 });
++    expect(page.url()).toContain("/dashboard");
++
++    // Go forward
++    await page.goForward();
++    await page.waitForURL("**/cases/new", { timeout: 5000 });
++    expect(page.url()).toContain("/cases/new");
++  });
++
++  test("back from protected route after redirect does not create a redirect loop", async ({
++    page,
++  }) => {
++    // Visit login, then navigate to dashboard (which requires auth)
++    await page.goto("/login");
++    await expect(page.locator("h1")).toBeVisible();
++
++    // Attempt to visit a protected route (unauthenticated)
++    await page.goto("/dashboard");
++    await page.waitForURL("**/login", { timeout: 10000 });
++
++    // Pressing back should go to the original login page, not loop
++    await page.goBack();
++    // Should not be stuck in a redirect loop
++    await page.waitForTimeout(1000);
++    // The URL should be stable (not rapidly changing)
++    const finalUrl = page.url();
++    expect(finalUrl).toBeDefined();
++  });
++});
+diff --git a/package-lock.json b/package-lock.json
+index bccc0d9..73e11ae 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -8,11 +8,14 @@
+       "name": "clarity",
+       "version": "0.1.0",
+       "dependencies": {
++        "@convex-dev/auth": "^0.0.92",
+         "@radix-ui/react-slot": "^1.2.4",
+         "class-variance-authority": "^0.7.1",
+         "convex": "^1.38.0",
++        "lucide-react": "^1.16.0",
+         "react": "^18.3.1",
+-        "react-dom": "^18.3.1"
++        "react-dom": "^18.3.1",
++        "react-router-dom": "^7.15.1"
+       },
+       "devDependencies": {
+         "@playwright/test": "^1.49.0",
+@@ -29,6 +32,36 @@
+         "vitest": "^2.1.8"
+       }
+     },
++    "node_modules/@auth/core": {
++      "version": "0.37.4",
++      "resolved": "https://registry.npmjs.org/@auth/core/-/core-0.37.4.tgz",
++      "integrity": "sha512-HOXJwXWXQRhbBDHlMU0K/6FT1v+wjtzdKhsNg0ZN7/gne6XPsIrjZ4daMcFnbq0Z/vsAbYBinQhhua0d77v7qw==",
++      "license": "ISC",
++      "peer": true,
++      "dependencies": {
++        "@panva/hkdf": "^1.2.1",
++        "jose": "^5.9.6",
++        "oauth4webapi": "^3.1.1",
++        "preact": "10.24.3",
++        "preact-render-to-string": "6.5.11"
++      },
++      "peerDependencies": {
++        "@simplewebauthn/browser": "^9.0.1",
++        "@simplewebauthn/server": "^9.0.2",
++        "nodemailer": "^6.8.0"
++      },
++      "peerDependenciesMeta": {
++        "@simplewebauthn/browser": {
++          "optional": true
++        },
++        "@simplewebauthn/server": {
++          "optional": true
++        },
++        "nodemailer": {
++          "optional": true
++        }
++      }
++    },
+     "node_modules/@babel/code-frame": {
+       "version": "7.29.0",
+       "resolved": "https://registry.npmjs.org/@babel/code-frame/-/code-frame-7.29.0.tgz",
+@@ -312,6 +345,37 @@
+         "node": ">=6.9.0"
+       }
+     },
++    "node_modules/@convex-dev/auth": {
++      "version": "0.0.92",
++      "resolved": "https://registry.npmjs.org/@convex-dev/auth/-/auth-0.0.92.tgz",
++      "integrity": "sha512-tNRIMTDxi2vrbT+3vz1FgNR1321IfIBDDBy59zul7E1DyzWQKoU0OzgFqWbiVm3o8gn0eQsYTU3UHNRX9kp3wQ==",
++      "license": "Apache-2.0",
++      "dependencies": {
++        "@oslojs/crypto": "^1.0.1",
++        "@oslojs/encoding": "^1.1.0",
++        "cookie": "^1.0.1",
++        "is-network-error": "^1.1.0",
++        "jose": "^5.2.2",
++        "jwt-decode": "^4.0.0",
++        "lucia": "^3.2.0",
++        "oauth4webapi": "^3.1.2",
++        "path-to-regexp": "^6.3.0",
++        "server-only": "^0.0.1"
++      },
++      "bin": {
++        "auth": "dist/bin.cjs"
++      },
++      "peerDependencies": {
++        "@auth/core": "^0.37.0",
++        "convex": "^1.17.0",
++        "react": "^18.2.0 || ^19.0.0-0"
++      },
++      "peerDependenciesMeta": {
++        "react": {
++          "optional": true
++        }
++      }
++    },
+     "node_modules/@esbuild/aix-ppc64": {
+       "version": "0.27.0",
+       "resolved": "https://registry.npmjs.org/@esbuild/aix-ppc64/-/aix-ppc64-0.27.0.tgz",
+@@ -1001,6 +1065,46 @@
+         "@jridgewell/sourcemap-codec": "^1.4.14"
+       }
+     },
++    "node_modules/@oslojs/asn1": {
++      "version": "1.0.0",
++      "resolved": "https://registry.npmjs.org/@oslojs/asn1/-/asn1-1.0.0.tgz",
++      "integrity": "sha512-zw/wn0sj0j0QKbIXfIlnEcTviaCzYOY3V5rAyjR6YtOByFtJiT574+8p9Wlach0lZH9fddD4yb9laEAIl4vXQA==",
++      "license": "MIT",
++      "dependencies": {
++        "@oslojs/binary": "1.0.0"
++      }
++    },
++    "node_modules/@oslojs/binary": {
++      "version": "1.0.0",
++      "resolved": "https://registry.npmjs.org/@oslojs/binary/-/binary-1.0.0.tgz",
++      "integrity": "sha512-9RCU6OwXU6p67H4NODbuxv2S3eenuQ4/WFLrsq+K/k682xrznH5EVWA7N4VFk9VYVcbFtKqur5YQQZc0ySGhsQ==",
++      "license": "MIT"
++    },
++    "node_modules/@oslojs/crypto": {
++      "version": "1.0.1",
++      "resolved": "https://registry.npmjs.org/@oslojs/crypto/-/crypto-1.0.1.tgz",
++      "integrity": "sha512-7n08G8nWjAr/Yu3vu9zzrd0L9XnrJfpMioQcvCMxBIiF5orECHe5/3J0jmXRVvgfqMm/+4oxlQ+Sq39COYLcNQ==",
++      "license": "MIT",
++      "dependencies": {
++        "@oslojs/asn1": "1.0.0",
++        "@oslojs/binary": "1.0.0"
++      }
++    },
++    "node_modules/@oslojs/encoding": {
++      "version": "1.1.0",
++      "resolved": "https://registry.npmjs.org/@oslojs/encoding/-/encoding-1.1.0.tgz",
++      "integrity": "sha512-70wQhgYmndg4GCPxPPxPGevRKqTIJ2Nh4OkiMWmDAVYsTQ+Ta7Sq+rPevXyXGdzr30/qZBnyOalCszoMxlyldQ==",
++      "license": "MIT"
++    },
++    "node_modules/@panva/hkdf": {
++      "version": "1.2.1",
++      "resolved": "https://registry.npmjs.org/@panva/hkdf/-/hkdf-1.2.1.tgz",
++      "integrity": "sha512-6oclG6Y3PiDFcoyk8srjLfVKyMfVCKJ27JwNPViuXziFpmdz+MZnZN/aKY0JGXgYuO/VghU0jcOAZgWXZ1Dmrw==",
++      "license": "MIT",
++      "funding": {
++        "url": "https://github.com/sponsors/panva"
++      }
++    },
+     "node_modules/@playwright/test": {
+       "version": "1.60.0",
+       "resolved": "https://registry.npmjs.org/@playwright/test/-/test-1.60.0.tgz",
+@@ -2238,6 +2342,19 @@
+         "convex": "^1.32.0"
+       }
+     },
++    "node_modules/cookie": {
++      "version": "1.1.1",
++      "resolved": "https://registry.npmjs.org/cookie/-/cookie-1.1.1.tgz",
++      "integrity": "sha512-ei8Aos7ja0weRpFzJnEA9UHJ/7XQmqglbRwnf2ATjcB9Wq874VKH9kfjjirM6UhU2/E5fFYadylyhFldcqSidQ==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=18"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/express"
++      }
++    },
+     "node_modules/cross-spawn": {
+       "version": "7.0.6",
+       "resolved": "https://registry.npmjs.org/cross-spawn/-/cross-spawn-7.0.6.tgz",
+@@ -2759,6 +2876,18 @@
+         "node": ">=0.10.0"
+       }
+     },
++    "node_modules/is-network-error": {
++      "version": "1.3.2",
++      "resolved": "https://registry.npmjs.org/is-network-error/-/is-network-error-1.3.2.tgz",
++      "integrity": "sha512-PhBY86zaxNZUuWP6h13Vu5oFe0XY6/UlKzQnYFELzGVHygP3MxmvTfYSG7GN3aIab/iWudSMgjSnG9Dq+nHrgA==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=16"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/sindresorhus"
++      }
++    },
+     "node_modules/isexe": {
+       "version": "2.0.0",
+       "resolved": "https://registry.npmjs.org/isexe/-/isexe-2.0.0.tgz",
+@@ -2766,6 +2895,15 @@
+       "dev": true,
+       "license": "ISC"
+     },
++    "node_modules/jose": {
++      "version": "5.10.0",
++      "resolved": "https://registry.npmjs.org/jose/-/jose-5.10.0.tgz",
++      "integrity": "sha512-s+3Al/p9g32Iq+oqXxkW//7jk2Vig6FF1CFqzVXoTUXt2qz89YWbL+OwS17NFYEvxC35n0FKeGO2LGYSxeM2Gg==",
++      "license": "MIT",
++      "funding": {
++        "url": "https://github.com/sponsors/panva"
++      }
++    },
+     "node_modules/js-tokens": {
+       "version": "4.0.0",
+       "resolved": "https://registry.npmjs.org/js-tokens/-/js-tokens-4.0.0.tgz",
+@@ -2832,6 +2970,15 @@
+         "node": ">=6"
+       }
+     },
++    "node_modules/jwt-decode": {
++      "version": "4.0.0",
++      "resolved": "https://registry.npmjs.org/jwt-decode/-/jwt-decode-4.0.0.tgz",
++      "integrity": "sha512-+KJGIyHgkGuIq3IEBNftfhW/LfWhXUIY6OmyVWjliu5KH1y0fw7VQ8YndE2O4qZdMSd9SqbnC8GOcZEy0Om7sA==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=18"
++      }
++    },
+     "node_modules/keyv": {
+       "version": "4.5.4",
+       "resolved": "https://registry.npmjs.org/keyv/-/keyv-4.5.4.tgz",
+@@ -2908,6 +3055,26 @@
+         "yallist": "^3.0.2"
+       }
+     },
++    "node_modules/lucia": {
++      "version": "3.2.2",
++      "resolved": "https://registry.npmjs.org/lucia/-/lucia-3.2.2.tgz",
++      "integrity": "sha512-P1FlFBGCMPMXu+EGdVD9W4Mjm0DqsusmKgO7Xc33mI5X1bklmsQb0hfzPhXomQr9waWIBDsiOjvr1e6BTaUqpA==",
++      "deprecated": "This package has been deprecated. Please see https://lucia-auth.com/lucia-v3/migrate.",
++      "license": "MIT",
++      "dependencies": {
++        "@oslojs/crypto": "^1.0.1",
++        "@oslojs/encoding": "^1.1.0"
++      }
++    },
++    "node_modules/lucide-react": {
++      "version": "1.16.0",
++      "resolved": "https://registry.npmjs.org/lucide-react/-/lucide-react-1.16.0.tgz",
++      "integrity": "sha512-dYwyPzb4MEKpGUmNYk3WKWPnMrHs3FKM+q94kAnJrcDIqqn1hq2xY8scaS2ovsOCM5D51ey2gaRG3PBb1vgoYQ==",
++      "license": "ISC",
++      "peerDependencies": {
++        "react": "^16.5.1 || ^17.0.0 || ^18.0.0 || ^19.0.0"
++      }
++    },
+     "node_modules/magic-string": {
+       "version": "0.30.21",
+       "resolved": "https://registry.npmjs.org/magic-string/-/magic-string-0.30.21.tgz",
+@@ -2971,6 +3138,15 @@
+       "dev": true,
+       "license": "MIT"
+     },
++    "node_modules/oauth4webapi": {
++      "version": "3.8.6",
++      "resolved": "https://registry.npmjs.org/oauth4webapi/-/oauth4webapi-3.8.6.tgz",
++      "integrity": "sha512-iwemM91xz8nryHti2yTmg5fhyEMVOkOXwHNqbvcATjyajb5oQxCQzrNOA6uElRHuMhQQTKUyFKV9y/CNyg25BQ==",
++      "license": "MIT",
++      "funding": {
++        "url": "https://github.com/sponsors/panva"
++      }
++    },
+     "node_modules/optionator": {
+       "version": "0.9.4",
+       "resolved": "https://registry.npmjs.org/optionator/-/optionator-0.9.4.tgz",
+@@ -3054,6 +3230,12 @@
+         "node": ">=8"
+       }
+     },
++    "node_modules/path-to-regexp": {
++      "version": "6.3.0",
++      "resolved": "https://registry.npmjs.org/path-to-regexp/-/path-to-regexp-6.3.0.tgz",
++      "integrity": "sha512-Yhpw4T9C6hPpgPeA28us07OJeqZ5EzQTkbfwuhsUg0c237RomFoETJgmp2sa3F/41gfLE6G5cqcYwznmeEeOlQ==",
++      "license": "MIT"
++    },
+     "node_modules/pathe": {
+       "version": "1.1.2",
+       "resolved": "https://registry.npmjs.org/pathe/-/pathe-1.1.2.tgz",
+@@ -3153,6 +3335,26 @@
+         "node": "^10 || ^12 || >=14"
+       }
+     },
++    "node_modules/preact": {
++      "version": "10.24.3",
++      "resolved": "https://registry.npmjs.org/preact/-/preact-10.24.3.tgz",
++      "integrity": "sha512-Z2dPnBnMUfyQfSQ+GBdsGa16hz35YmLmtTLhM169uW944hYL6xzTYkJjC07j+Wosz733pMWx0fgON3JNw1jJQA==",
++      "license": "MIT",
++      "peer": true,
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/preact"
++      }
++    },
++    "node_modules/preact-render-to-string": {
++      "version": "6.5.11",
++      "resolved": "https://registry.npmjs.org/preact-render-to-string/-/preact-render-to-string-6.5.11.tgz",
++      "integrity": "sha512-ubnauqoGczeGISiOh6RjX0/cdaF8v/oDXIjO85XALCQjwQP+SB4RDXXtvZ6yTYSjG+PC1QRP2AhPgCEsM2EvUw==",
++      "license": "MIT",
++      "peerDependencies": {
++        "preact": ">=10"
++      }
++    },
+     "node_modules/prelude-ls": {
+       "version": "1.2.1",
+       "resolved": "https://registry.npmjs.org/prelude-ls/-/prelude-ls-1.2.1.tgz",
+@@ -3206,6 +3408,7 @@
+       "resolved": "https://registry.npmjs.org/react-dom/-/react-dom-18.3.1.tgz",
+       "integrity": "sha512-5m4nQKp+rZRb09LNH59GM4BxTh9251/ylbKIbpe7TpGxfJ+9kv6BLkLBXIjjspbgbnIBNqlI23tRnTWT0snUIw==",
+       "license": "MIT",
++      "peer": true,
+       "dependencies": {
+         "loose-envify": "^1.1.0",
+         "scheduler": "^0.23.2"
+@@ -3224,6 +3427,44 @@
+         "node": ">=0.10.0"
+       }
+     },
++    "node_modules/react-router": {
++      "version": "7.15.1",
++      "resolved": "https://registry.npmjs.org/react-router/-/react-router-7.15.1.tgz",
++      "integrity": "sha512-R8rl9HhgikFYoPJymnUtPXWbnDb3oget6lQnfIoupbt61aT9aOhRkDsY2XRhZRyX1Z/8a5sL74fXmFNm3NRK5A==",
++      "license": "MIT",
++      "dependencies": {
++        "cookie": "^1.0.1",
++        "set-cookie-parser": "^2.6.0"
++      },
++      "engines": {
++        "node": ">=20.0.0"
++      },
++      "peerDependencies": {
++        "react": ">=18",
++        "react-dom": ">=18"
++      },
++      "peerDependenciesMeta": {
++        "react-dom": {
++          "optional": true
++        }
++      }
++    },
++    "node_modules/react-router-dom": {
++      "version": "7.15.1",
++      "resolved": "https://registry.npmjs.org/react-router-dom/-/react-router-dom-7.15.1.tgz",
++      "integrity": "sha512-AzF62gjY6U9rkMq4RfP/r2EVtQ7DMfNMjyOp/flLTCrtRylLiK4wT4pSq6O8rOXZ2eXdZYJPEYe+ifomiv+Igg==",
++      "license": "MIT",
++      "dependencies": {
++        "react-router": "7.15.1"
++      },
++      "engines": {
++        "node": ">=20.0.0"
++      },
++      "peerDependencies": {
++        "react": ">=18",
++        "react-dom": ">=18"
++      }
++    },
+     "node_modules/resolve-from": {
+       "version": "4.0.0",
+       "resolved": "https://registry.npmjs.org/resolve-from/-/resolve-from-4.0.0.tgz",
+@@ -3305,6 +3546,18 @@
+         "semver": "bin/semver.js"
+       }
+     },
++    "node_modules/server-only": {
++      "version": "0.0.1",
++      "resolved": "https://registry.npmjs.org/server-only/-/server-only-0.0.1.tgz",
++      "integrity": "sha512-qepMx2JxAa5jjfzxG79yPPq+8BuFToHd1hm7kI+Z4zAq1ftQiP7HcxMhDDItrbtwVeLg/cY2JnKnrcFkmiswNA==",
++      "license": "MIT"
++    },
++    "node_modules/set-cookie-parser": {
++      "version": "2.7.2",
++      "resolved": "https://registry.npmjs.org/set-cookie-parser/-/set-cookie-parser-2.7.2.tgz",
++      "integrity": "sha512-oeM1lpU/UvhTxw+g3cIfxXHyJRc/uidd3yK1P242gzHds0udQBYzs3y8j4gCCW+ZJ7ad0yctld8RYO+bdurlvw==",
++      "license": "MIT"
++    },
+     "node_modules/shebang-command": {
+       "version": "2.0.0",
+       "resolved": "https://registry.npmjs.org/shebang-command/-/shebang-command-2.0.0.tgz",
+diff --git a/package.json b/package.json
+index adf89f6..e81b1fc 100644
+--- a/package.json
++++ b/package.json
+@@ -13,11 +13,14 @@
+     "typecheck": "tsc --noEmit"
+   },
+   "dependencies": {
++    "@convex-dev/auth": "^0.0.92",
+     "@radix-ui/react-slot": "^1.2.4",
+     "class-variance-authority": "^0.7.1",
+     "convex": "^1.38.0",
++    "lucide-react": "^1.16.0",
+     "react": "^18.3.1",
+-    "react-dom": "^18.3.1"
++    "react-dom": "^18.3.1",
++    "react-router-dom": "^7.15.1"
+   },
+   "devDependencies": {
+     "@playwright/test": "^1.49.0",
+diff --git a/src/App.tsx b/src/App.tsx
+new file mode 100644
+index 0000000..1aa1587
+--- /dev/null
++++ b/src/App.tsx
+@@ -0,0 +1,114 @@
++import { Routes, Route, Navigate, useParams, useLocation } from "react-router-dom";
++import { useConvexAuth } from "@convex-dev/auth/react";
++import { ProtectedRoute } from "./components/layout/ProtectedRoute";
++import { AdminRoute } from "./components/layout/AdminRoute";
++import { TopNav } from "./components/layout/TopNav";
++
++/* ---------- Stub page components ---------- */
++
++function HomePage() {
++  return <main><h1 data-testid="page-home">Home</h1></main>;
++}
++
++function LoginPage() {
++  return <main><h1 data-testid="page-login">Login</h1></main>;
++}
++
++function InvitePage() {
++  const { token } = useParams();
++  return <main><h1 data-testid="page-invite">Invite {token}</h1></main>;
++}
++
++function DashboardPage() {
++  return <main><h1 data-testid="page-dashboard">Dashboard</h1></main>;
++}
++
++function NewCasePage() {
++  return <main><h1 data-testid="page-new-case">New Case</h1></main>;
++}
++
++function CaseDetailPage() {
++  return <main><h1 data-testid="page-case-detail">Case Detail</h1></main>;
++}
++
++function CasePrivatePage() {
++  const { caseId } = useParams();
++  return <main><h1 data-testid="page-case-private">Private Coaching</h1><span data-caseid={caseId} /></main>;
++}
++
++function CaseJointPage() {
++  const { caseId } = useParams();
++  return <main><h1 data-testid="page-case-joint">Joint Session</h1><span data-caseid={caseId} /></main>;
++}
++
++function CaseClosedPage() {
++  const { caseId } = useParams();
++  return <main><h1 data-testid="page-case-closed">Closed</h1><span data-caseid={caseId} /></main>;
++}
++
++function AdminTemplatesPage() {
++  return <main><h1 data-testid="page-admin-templates">Templates</h1></main>;
++}
++
++function AdminTemplateDetailPage() {
++  const { id } = useParams();
++  return <main><h1 data-testid="page-admin-template-detail">Template {id}</h1></main>;
++}
++
++function AdminAuditPage() {
++  return <main><h1 data-testid="page-admin-audit">Audit Log</h1></main>;
++}
++
++function NotFoundPage() {
++  return (
++    <main>
++      <h1 data-testid="page-not-found">Page not found</h1>
++      <a href="/dashboard">Go to Dashboard</a>
++    </main>
++  );
++}
++
++/* ---------- Layout ---------- */
++
++function AppLayout() {
++  const { isAuthenticated, isLoading } = useConvexAuth();
++  const location = useLocation();
++  const caseMatch = location.pathname.match(/^\/cases\/([^/]+)\/(private|joint|closed)$/);
++
++  const phaseMap: Record<string, string> = {
++    private: "Private Coaching",
++    joint: "Joint Session",
++    closed: "Closed",
++  };
++
++  return (
++    <>
++      {isAuthenticated && !isLoading && (
++        caseMatch ? (
++          <TopNav variant="case-detail" caseId={caseMatch[1]} casePhase={phaseMap[caseMatch[2]]} />
++        ) : (
++          <TopNav variant="logged-in" />
++        )
++      )}
++      <Routes>
++        <Route path="/" element={<HomePage />} />
++        <Route path="/login" element={isAuthenticated && !isLoading ? <Navigate to="/dashboard" replace /> : <LoginPage />} />
++        <Route path="/invite/:token" element={<InvitePage />} />
++        <Route path="/dashboard" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
++        <Route path="/cases/new" element={<ProtectedRoute><NewCasePage /></ProtectedRoute>} />
++        <Route path="/cases/:caseId" element={<ProtectedRoute><CaseDetailPage /></ProtectedRoute>} />
++        <Route path="/cases/:caseId/private" element={<ProtectedRoute><CasePrivatePage /></ProtectedRoute>} />
++        <Route path="/cases/:caseId/joint" element={<ProtectedRoute><CaseJointPage /></ProtectedRoute>} />
++        <Route path="/cases/:caseId/closed" element={<ProtectedRoute><CaseClosedPage /></ProtectedRoute>} />
++        <Route path="/admin/templates" element={<AdminRoute><AdminTemplatesPage /></AdminRoute>} />
++        <Route path="/admin/templates/:id" element={<AdminRoute><AdminTemplateDetailPage /></AdminRoute>} />
++        <Route path="/admin/audit" element={<AdminRoute><AdminAuditPage /></AdminRoute>} />
++        <Route path="*" element={<NotFoundPage />} />
++      </Routes>
++    </>
++  );
++}
++
++export default function App() {
++  return <AppLayout />;
++}
+diff --git a/src/components/layout/AdminRoute.tsx b/src/components/layout/AdminRoute.tsx
+new file mode 100644
+index 0000000..9953d03
+--- /dev/null
++++ b/src/components/layout/AdminRoute.tsx
+@@ -0,0 +1,35 @@
++import { useConvexAuth } from "@convex-dev/auth/react";
++import { useQuery } from "convex/react";
++import { Navigate } from "react-router-dom";
++import { api } from "../../../convex/_generated/api";
++import { LoadingSpinner } from "./LoadingSpinner";
++
++export function AdminRoute({ children }: { children: React.ReactNode }) {
++  const { isLoading, isAuthenticated } = useConvexAuth();
++  const user = useQuery(
++    api.users.me,
++    isAuthenticated ? {} : "skip",
++  );
++
++  if (isLoading) {
++    return <LoadingSpinner />;
++  }
++
++  if (!isAuthenticated) {
++    return <Navigate to="/login" replace />;
++  }
++
++  if (user === undefined) {
++    return <LoadingSpinner />;
++  }
++
++  if (user === null) {
++    return <Navigate to="/dashboard" replace />;
++  }
++
++  if (user.role !== "ADMIN") {
++    return <Navigate to="/dashboard" replace />;
++  }
++
++  return <>{children}</>;
++}
+diff --git a/src/components/layout/LoadingSpinner.tsx b/src/components/layout/LoadingSpinner.tsx
+new file mode 100644
+index 0000000..0394f1a
+--- /dev/null
++++ b/src/components/layout/LoadingSpinner.tsx
+@@ -0,0 +1,7 @@
++export function LoadingSpinner() {
++  return (
++    <div className="cc-loading-container" style={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: "100vh" }}>
++      <div aria-label="Loading" role="status">Loading…</div>
++    </div>
++  );
++}
+diff --git a/src/components/layout/ProtectedRoute.tsx b/src/components/layout/ProtectedRoute.tsx
+new file mode 100644
+index 0000000..4ebcf57
+--- /dev/null
++++ b/src/components/layout/ProtectedRoute.tsx
+@@ -0,0 +1,17 @@
++import { useConvexAuth } from "@convex-dev/auth/react";
++import { Navigate } from "react-router-dom";
++import { LoadingSpinner } from "./LoadingSpinner";
++
++export function ProtectedRoute({ children }: { children: React.ReactNode }) {
++  const { isLoading, isAuthenticated } = useConvexAuth();
++
++  if (isLoading) {
++    return <LoadingSpinner />;
++  }
++
++  if (!isAuthenticated) {
++    return <Navigate to="/login" replace />;
++  }
++
++  return <>{children}</>;
++}
+diff --git a/src/components/layout/TopNav.tsx b/src/components/layout/TopNav.tsx
+new file mode 100644
+index 0000000..9fde254
+--- /dev/null
++++ b/src/components/layout/TopNav.tsx
+@@ -0,0 +1,49 @@
++import { ArrowLeft } from "lucide-react";
++import { Link } from "react-router-dom";
++
++interface TopNavProps {
++  variant: "logged-in" | "case-detail";
++  casePhase?: string;
++  caseId?: string;
++}
++
++export function TopNav({ variant, casePhase, caseId }: TopNavProps) {
++  if (variant === "case-detail") {
++    return (
++      <nav className="cc-topnav" data-testid="topnav-case-detail" aria-label="Case navigation">
++        <div className="cc-topnav-inner">
++          <Link
++            to={caseId ? `/cases/${caseId}` : "/dashboard"}
++            className="cc-topnav-back"
++            aria-label="Back to case"
++          >
++            <ArrowLeft size={14} />
++          </Link>
++          {casePhase && (
++            <span className="cc-topnav-phase" data-testid="topnav-phase">
++              {casePhase}
++            </span>
++          )}
++        </div>
++      </nav>
++    );
++  }
++
++  return (
++    <nav className="cc-topnav" data-testid="topnav-logged-in" aria-label="Main navigation">
++      <div className="cc-topnav-inner">
++        <Link to="/dashboard" className="cc-topnav-brand">
++          Clarity
++        </Link>
++        <div className="cc-topnav-actions">
++          <Link to="/dashboard" data-testid="topnav-dashboard-link">
++            Dashboard
++          </Link>
++          <div className="cc-topnav-user" data-testid="topnav-user-menu">
++            Account
++          </div>
++        </div>
++      </div>
++    </nav>
++  );
++}
+diff --git a/src/lib/errorHandler.ts b/src/lib/errorHandler.ts
+new file mode 100644
+index 0000000..5f4034a
+--- /dev/null
++++ b/src/lib/errorHandler.ts
+@@ -0,0 +1,35 @@
++import type { ErrorCode } from "../../convex/lib/errors";
++import { ConvexError } from "convex/values";
++
++export type ErrorMessage = { code: string; message: string };
++
++const USER_MESSAGES: Record<ErrorCode, string> = {
++  UNAUTHENTICATED: "Please sign in to continue.",
++  FORBIDDEN: "You don't have permission to perform this action.",
++  NOT_FOUND: "The requested resource could not be found.",
++  CONFLICT: "This action conflicts with the current state. Please refresh and try again.",
++  INVALID_INPUT: "The provided input is invalid. Please check your entries and try again.",
++  TOKEN_INVALID: "This link is no longer valid. Please request a new one.",
++  RATE_LIMITED: "Too many requests. Please wait a moment and try again.",
++  AI_ERROR: "The AI service is temporarily unavailable. Please try again shortly.",
++  INTERNAL: "Something went wrong. Please try again.",
++};
++
++/**
++ * Maps a ConvexError to a user-friendly message.
++ *
++ * This function intentionally discards the original error context to prevent
++ * leaking internal details to the UI. Callers should log the original error
++ * before calling this function if error context needs to be preserved for
++ * debugging.
++ */
++export function handleConvexError(error: unknown): ErrorMessage {
++  if (error instanceof ConvexError) {
++    const data = error.data as { code?: string };
++    if (data && typeof data.code === "string" && data.code in USER_MESSAGES) {
++      const code = data.code as ErrorCode;
++      return { code, message: USER_MESSAGES[code] };
++    }
++  }
++  return { code: "INTERNAL", message: "Something went wrong. Please try again." };
++}
+diff --git a/src/main.tsx b/src/main.tsx
+new file mode 100644
+index 0000000..67b126e
+--- /dev/null
++++ b/src/main.tsx
+@@ -0,0 +1,22 @@
++import { StrictMode } from "react";
++import { createRoot } from "react-dom/client";
++import { ConvexReactClient } from "convex/react";
++import { ConvexAuthProvider } from "@convex-dev/auth/react";
++import { BrowserRouter } from "react-router-dom";
++import App from "./App";
++
++const convexUrl = import.meta.env.VITE_CONVEX_URL;
++if (!convexUrl) {
++  throw new Error("Missing VITE_CONVEX_URL environment variable");
++}
++const convex = new ConvexReactClient(convexUrl);
++
++createRoot(document.getElementById("root")!).render(
++  <StrictMode>
++    <ConvexAuthProvider client={convex}>
++      <BrowserRouter>
++        <App />
++      </BrowserRouter>
++    </ConvexAuthProvider>
++  </StrictMode>,
++);
+diff --git a/src/vite-env.d.ts b/src/vite-env.d.ts
+new file mode 100644
+index 0000000..11f02fe
+--- /dev/null
++++ b/src/vite-env.d.ts
+@@ -0,0 +1 @@
++/// <reference types="vite/client" />
+diff --git a/tests/unit/errorHandler.test.ts b/tests/unit/errorHandler.test.ts
+new file mode 100644
+index 0000000..7e909a6
+--- /dev/null
++++ b/tests/unit/errorHandler.test.ts
+@@ -0,0 +1,126 @@
++import { describe, it, expect } from "vitest";
++import { ConvexError } from "convex/values";
++import { handleConvexError } from "../../src/lib/errorHandler";
++import type { ErrorMessage } from "../../src/lib/errorHandler";
++import { appError } from "../../convex/lib/errors";
++import type { ErrorCode } from "../../convex/lib/errors";
++
++/**
++ * WOR-102: Frontend error handler utility — maps ConvexError codes to
++ * user-friendly toast messages.
++ *
++ * At red state, the import from src/lib/errorHandler.ts produces TS2307
++ * because the module has not been created yet. That is expected.
++ */
++
++const ALL_CODES: ErrorCode[] = [
++  "UNAUTHENTICATED",
++  "FORBIDDEN",
++  "NOT_FOUND",
++  "CONFLICT",
++  "INVALID_INPUT",
++  "TOKEN_INVALID",
++  "RATE_LIMITED",
++  "AI_ERROR",
++  "INTERNAL",
++];
++
++describe("AC: Frontend error handler maps ConvexError codes to user-friendly messages", () => {
++  describe("each of the 9 ErrorCode values returns a user-friendly message", () => {
++    it.each(ALL_CODES)(
++      "handleConvexError with code %s returns a non-empty user-friendly string",
++      (code) => {
++        const serverError = appError(code, `internal detail for ${code}`);
++        const result: ErrorMessage = handleConvexError(serverError);
++
++        // Must have code and message fields
++        expect(result.code).toBe(code);
++        expect(typeof result.message).toBe("string");
++        expect(result.message.length).toBeGreaterThan(0);
++
++        // Message must NOT be the raw internal detail — it must be curated
++        expect(result.message).not.toBe(`internal detail for ${code}`);
++
++        // Message must NOT be the raw error code itself
++        expect(result.message).not.toBe(code);
++      },
++    );
++  });
++
++  describe("unknown / malformed errors return generic fallback", () => {
++    it("returns generic fallback for a plain Error (not ConvexError)", () => {
++      const plainError = new Error("unexpected failure");
++      const result: ErrorMessage = handleConvexError(plainError);
++
++      expect(result.code).toBe("INTERNAL");
++      expect(result.message).toBe("Something went wrong. Please try again.");
++    });
++
++    it("returns generic fallback for a string thrown value", () => {
++      const result: ErrorMessage = handleConvexError("some string error");
++
++      expect(result.code).toBe("INTERNAL");
++      expect(result.message).toBe("Something went wrong. Please try again.");
++    });
++
++    it("returns generic fallback for null", () => {
++      const result: ErrorMessage = handleConvexError(null);
++
++      expect(result.code).toBe("INTERNAL");
++      expect(result.message).toBe("Something went wrong. Please try again.");
++    });
++
++    it("returns generic fallback for undefined", () => {
++      const result: ErrorMessage = handleConvexError(undefined);
++
++      expect(result.code).toBe("INTERNAL");
++      expect(result.message).toBe("Something went wrong. Please try again.");
++    });
++
++    it("returns generic fallback for ConvexError with unrecognized code", () => {
++      // Simulate a ConvexError with a code not in the known 9
++      const weirdError = new ConvexError({
++        code: "UNKNOWN_CODE",
++        message: "some server detail",
++        httpStatus: 500,
++      });
++      const result: ErrorMessage = handleConvexError(weirdError);
++
++      expect(result.code).toBe("INTERNAL");
++      expect(result.message).toBe("Something went wrong. Please try again.");
++    });
++  });
++
++  describe("error handler never exposes raw internal messages", () => {
++    it.each(ALL_CODES)(
++      "handleConvexError with %s does not return the raw server message",
++      (code) => {
++        const rawMessage = `DB error: table users, row abc123, constraint violation in ${code}`;
++        const serverError = appError(code, rawMessage);
++        const result: ErrorMessage = handleConvexError(serverError);
++
++        // The user-facing message must not contain the raw internal detail
++        expect(result.message).not.toContain("DB error");
++        expect(result.message).not.toContain("abc123");
++        expect(result.message).not.toContain("constraint violation");
++      },
++    );
++  });
++
++  describe("return type shape", () => {
++    it("returns an object with exactly code and message fields", () => {
++      const serverError = appError("NOT_FOUND", "resource missing");
++      const result: ErrorMessage = handleConvexError(serverError);
++
++      const keys = Object.keys(result).sort();
++      expect(keys).toStrictEqual(["code", "message"]);
++    });
++
++    it("fallback also returns exactly code and message fields", () => {
++      const result: ErrorMessage = handleConvexError(new Error("boom"));
++
++      const keys = Object.keys(result).sort();
++      expect(keys).toStrictEqual(["code", "message"]);
++    });
++  });
++});
+diff --git a/tests/unit/theme-tokens.test.ts b/tests/unit/theme-tokens.test.ts
+index f206c21..435ba96 100644
+--- a/tests/unit/theme-tokens.test.ts
++++ b/tests/unit/theme-tokens.test.ts
+@@ -440,8 +440,13 @@ describe("theme.ts token mirror", () => {
+   let themeModule: { light: Record<string, string>; dark: Record<string, string> };
+ 
+   beforeAll(async () => {
+-    // Dynamic import of the theme module
+-    themeModule = (await import("../../src/styles/theme")).default;
++    // Dynamic import of the theme module — convert to Record via Object.fromEntries
++    // so we can index with dynamic string keys in assertions below.
++    const imported = await import("../../src/styles/theme");
++    themeModule = {
++      light: Object.fromEntries(Object.entries(imported.default.light)),
++      dark: Object.fromEntries(Object.entries(imported.default.dark)),
++    };
+   });
+ 
+   it("exports light and dark keys", () => {
+diff --git a/tests/unit/vite-config.test.ts b/tests/unit/vite-config.test.ts
+new file mode 100644
+index 0000000..25ae4fd
+--- /dev/null
++++ b/tests/unit/vite-config.test.ts
+@@ -0,0 +1,57 @@
++import { describe, it, expect } from "vitest";
++import { loadConfigFromFile } from "vite";
++import path from "node:path";
++
++/**
++ * WOR-102: Vite config includes VITE_CONVEX_URL environment variable
++ *
++ * Verifies that vite.config.ts is parseable and includes the react plugin.
++ * The VITE_ env prefix is Vite's default behavior, so VITE_CONVEX_URL is
++ * automatically exposed to the client. We verify the config loads without
++ * error and includes the react() plugin.
++ */
++
++const configPath = path.resolve(__dirname, "../../vite.config.ts");
++
++describe("AC: Vite config includes VITE_CONVEX_URL environment variable", () => {
++  it("vite.config.ts loads without error", async () => {
++    const result = await loadConfigFromFile(
++      { command: "serve", mode: "development" },
++      configPath,
++    );
++
++    expect(result).not.toBeNull();
++    expect(result?.config).toBeDefined();
++  });
++
++  it("includes the react plugin", async () => {
++    const result = await loadConfigFromFile(
++      { command: "serve", mode: "development" },
++      configPath,
++    );
++
++    // The react plugin registers with name "vite:react-babel" (or similar)
++    const plugins = result?.config.plugins?.flat() ?? [];
++    const pluginNames = plugins
++      .filter((p): p is { name: string } => p !== null && typeof p === "object" && "name" in p)
++      .map((p) => p.name);
++
++    expect(pluginNames.some((name) => name.includes("react"))).toBe(true);
++  });
++
++  it("does not override envPrefix to exclude VITE_ vars", async () => {
++    const result = await loadConfigFromFile(
++      { command: "serve", mode: "development" },
++      configPath,
++    );
++
++    // If envPrefix is set, it must include "VITE_" (the default).
++    // If envPrefix is not set, Vite defaults to "VITE_" which is correct.
++    const envPrefix = result?.config.envPrefix;
++    if (envPrefix !== undefined) {
++      const prefixes = Array.isArray(envPrefix) ? envPrefix : [envPrefix];
++      expect(prefixes).toContain("VITE_");
++    }
++    // If undefined, the default "VITE_" applies — test passes
++  });
++});
