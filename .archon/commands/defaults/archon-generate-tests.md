@@ -282,6 +282,11 @@ Output a concise final status:
   contract-promised modules will produce `TS2307` errors at red
   state — those are correct and the validator accepts them. **No
   suppression is needed and no suppression is permitted.**
+- **Every test must clean up after itself between runs.** Whatever
+  state a test sets up — DOM render, mock, temp file, fixture,
+  spy — tear it down in `afterEach` (or via a project-level setup
+  file). Cleanup gaps cause runtime failures the static validator
+  can't catch and the cage prevents the dev from fixing.
 
 ## Greenfield Tasks
 

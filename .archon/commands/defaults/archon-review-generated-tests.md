@@ -245,6 +245,10 @@ Evaluate:
   state are tolerated by the validator and should not be hidden.
 - Are any tests likely to push the implementation agent toward
   test-harness gaming, fake IDs, selectors, or fixture-specific behavior?
+- Do all tests clean up after themselves between runs (DOM teardown,
+  mock restoration, temp-file removal — whatever state was set up)?
+  Mismatched cleanup causes runtime failures the static validator can't
+  catch and the cage prevents the dev from fixing.
 - **If a prior review exists:** was each prior `required_repairs[]`
   entry actually addressed? Did the repair introduce a new issue?
 
@@ -255,6 +259,7 @@ Evaluate:
 - [ ] Test-gaming risks are listed
 - [ ] `typescript_escape_hatches` array reflects an actual grep
       over the test files (verified in Phase 1.5)
+- [ ] All tests clean up after themselves between runs
 - [ ] Prior repair items (if any) verified as fixed or surfaced as
       still-broken
 
@@ -281,7 +286,8 @@ prior version) as valid JSON with this shape:
 Set `"passed": false` if any required repair remains, including any
 `selector_conflicts`, `unflushed_timer_tests`, or
 `typescript_escape_hatches` entries from Phase 1.5 — those will
-burn the dev-loop budget if not fixed first.
+burn the dev-loop budget if not fixed first. Cleanup gaps go in
+`required_repairs[]` with a clear `required_change`.
 
 Each item in `required_repairs` must include:
 - `file`

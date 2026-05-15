@@ -127,3 +127,39 @@ that exists only to satisfy a mock, generated-file stub, undefined
 placeholder, fixture, or validation harness. If a prior repair copied a
 pattern and validation still failed, the next repair must explain why
 that pattern is incompatible before proposing code.
+
+### Test-side defects go in `required_repairs[]` with a test path
+
+If the validation failure stems from a defect in the *test* rather
+than the implementation, write the repair entry with a test-file
+path (anything under `tests/`, `test/`, `e2e/`, `__tests__/`, or any
+`*.test.*` / `*.spec.*` / framework-config file). The downstream
+`implementation-quality-final` node classifies `failure_scope`
+based on these paths — if EVERY entry in `required_repairs[]`
+points at a test path, it routes to a test-repair node instead of
+the next dev-attempt. This is how the cage is respected when the
+test itself is wrong: a separate agent does the test edit.
+
+Typical test-side defects:
+- Multiple tests in the same file render the same component or
+  query the same global without cleanup in `afterEach`. The
+  symptom is "found multiple elements" or "expected 1 call, got
+  2" at runtime — a state-isolation bug, not an implementation
+  bug.
+- Tests reuse a temp path or fixture without resetting between
+  cases, producing "fixture already exists."
+- A test imports from a path the contract did not promise.
+- A selector matches multiple rendered nodes the implementation
+  correctly produced.
+
+When the failure is a test-side defect, prefer one repair entry
+per affected test file. Set `file` to the test path, set
+`issue` and `exact_solution` clearly, and set `example_code` to
+the literal change to add (e.g. the `afterEach(cleanup)` block).
+
+If BOTH test and implementation defects exist, list both kinds of
+entries. `failure_scope` then becomes `mixed` — the dev-loop
+continues normally (production scope wins for routing) and the
+test-side issues get picked up on the next reviewer pass once the
+production issues are addressed, OR by the final test-repair
+salvage node if production lands but tests still fail.
