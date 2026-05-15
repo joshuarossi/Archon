@@ -2706,3 +2706,116 @@ improvement candidate. Not building it tonight — letting WOR-110
 run, see if it surfaces another failure mode worth attending to
 first.
 
+
+---
+
+## Entry — 2026-05-15, 18:00 CDT — WOR-113: test-editor converging but ran out of slot budget
+
+### What happened
+
+WOR-113 (NewCasePage — case creation form with progressive
+disclosure) ran the full task-implement loop. Final state:
+**halted In Progress, no PR, no `archon-needs-review` label** —
+the dev-loop exhausted all 5 slots without converging.
+
+This is NOT a mechanism failure. It is the three-way verdict
+(PR #31) + test-editor (PR #35) working correctly but running
+out of runway.
+
+### The diagnosis was correct every round
+
+`dev-review-final.json`:
+
+> "Production handleSubmit is correct — it properly awaits
+> createCase, accesses result.caseId, navigates to
+> /cases/:caseId/invite, and resets submitting in a finally
+> block. The 3 remaining vitest failures are test-side: the
+> mutation mock does not return a resolved promise."
+
+The single `required_repairs[]` entry pointed at
+`tests/unit/new-case-page.test.tsx`. So `parse-dev-review`
+correctly emitted `verdict: test_needs_edits` EVERY round (1-5),
+and `edit-tests-2`, `edit-tests-3`, `edit-tests-4`,
+`edit-tests-5` all fired. The pipeline never once wrongly
+forced the dev to break working production code (the pre-PR-31
+WOR-104/WOR-107 failure mode). That part is fully fixed.
+
+### The specific unconverged repair
+
+The test mock for `useMutation(api.cases.create)` does not
+return a callable that resolves with `{ caseId, inviteUrl }`.
+When `handleSubmit` calls `await createCase({...})`, the mock's
+returned promise never settles. The component stays stuck in
+`submitting` state with "Creating..." text and a disabled
+button → 3 tests fail (all same root cause).
+
+The fix the reviewer wanted:
+
+```ts
+const mockMutate = vi.fn();
+mockMutate.mockResolvedValue({ caseId: "test123", inviteUrl: null });
+// where mockMutate is what useMutation(api.cases.create) returns
+```
+
+### Why it couldn't converge in 5 slots
+
+The test-editor made **5 real improvement commits**:
+- aria-labels for accessibility (description, desired outcome,
+  solo checkbox)
+- description textarea aria-label substring fix
+- test state isolation (clearing mockMutate between tests)
+- standard "{Field} is required" validation messages
+- 3 test-side defect fixes (helper text ambiguity, JSDOM
+  details, submit button selector)
+
+Each commit was genuine progress on *other* test defects the
+reviewer flagged across rounds. The mock-resolution issue was
+the last holdout and the editor never got a clean slot to
+focus solely on it — each round it was also chasing the other
+flagged defects, and the contract-test interaction is subtle
+(the mock has to be wired through whatever ConvexProvider
+mock wrapper the test uses, not just a bare `vi.fn()`).
+
+The 5-slot budget is the constraint. The editor was
+*converging* — fewer failures each round — just not fast
+enough to hit zero within 5.
+
+### What this argues for
+
+Two candidate Mode 2 improvements (not building tonight,
+recording for the backlog):
+
+1. **Slot budget should be larger when the verdict is
+   consistently `test_needs_edits` AND the failure count is
+   monotonically decreasing.** A dev-loop that's making
+   progress every round shouldn't be killed at a fixed N. A
+   "still converging" signal (fewer failing tests than last
+   round) could extend the budget a couple slots before the
+   followup-bug / halt path fires.
+
+2. **When the dev-loop exhausts with verdict ==
+   test_needs_edits and a clean, specific
+   `required_repairs[]`, it should file an autonomous
+   followup-bug (like PR #30's pattern) rather than just
+   halting In Progress.** The reviewer produced a precise,
+   actionable repair with example code. That is exactly the
+   input a fresh bug-ticket run could consume and resolve in
+   one pass — instead of leaving the ticket parked for
+   operator intervention.
+
+(2) is the higher-value fix: it makes the exhaustion case
+self-healing, same as the WOR-102 → WOR-139 pattern. The
+reviewer's verdict already contains everything a bug ticket
+needs.
+
+### Immediate action
+
+Full runbook reset of WOR-113 and re-fire. A fresh 5-slot
+budget against the partially-improved state (the editor's
+prior commits don't carry over after a clean reset — it
+starts from test-gen again — but the contract and the
+NewCasePage implementation are well-understood now, so the
+re-run should converge faster, or surface whether the
+mock-wiring issue is a deeper test-infrastructure gap).
+
+Watching this one closely on the re-run.
