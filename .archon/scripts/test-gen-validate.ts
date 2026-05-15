@@ -227,24 +227,59 @@ function parseTscOutput(stdout: string): TscError[] {
  *     contract-promised path.
  *
  * Everything else is unexpected.
+ *
+ * Two flavors of import to handle:
+ *
+ *   1. Multi-segment relative imports like `../../convex/schema` from
+ *      `tests/unit/foo.test.ts`. After stripping leading `..` segments,
+ *      the import becomes `convex/schema` which matches the contract
+ *      path `convex/schema.ts` by suffix (or equality after stripping
+ *      file extensions).
+ *
+ *   2. Same-directory relative imports like `./fixtures` from
+ *      `e2e/smoke.spec.ts`. After stripping `./`, the import is just
+ *      `fixtures` — shorter than the contract path `e2e/fixtures.ts`.
+ *      We need a basename match for these: `./fixtures` can only refer
+ *      to a sibling of the importing file, so if any contract path's
+ *      basename equals the single-segment import, accept.
  */
 function isExpectedRedStateError(err: TscError, contractPaths: string[]): boolean {
   if (err.code !== 'TS2307') return false;
-  // Message looks like: `Cannot find module '../../convex/schema' or its corresponding type declarations.`
   const moduleMatch = err.message.match(/Cannot find module ['"]([^'"]+)['"]/);
   if (!moduleMatch) return false;
   const importPath = moduleMatch[1];
-  // Strip leading `./` and `../` to get just the trailing path component
-  // that's likely to match the contract entry. e.g. `../../convex/schema`
-  // → `convex/schema`. We accept either the bare resolution OR the full
-  // relative import as long as the suffix matches a contract path.
+
+  // Normalize: strip leading `./` and `../` segments, trailing TS extension.
+  // `./fixtures` → `fixtures`. `../../convex/schema` → `convex/schema`.
+  const cleanImport = importPath
+    .replace(/^(\.\.?\/)+/g, '')
+    .replace(/\.(ts|tsx|js|jsx|mts|cts)$/, '');
+
+  // Basename of the import — the leaf, e.g. `fixtures` from `convex/lib/fixtures`.
+  const importBasename = cleanImport.includes('/')
+    ? cleanImport.slice(cleanImport.lastIndexOf('/') + 1)
+    : cleanImport;
+
   for (const cp of contractPaths) {
-    // Normalize: contract paths may or may not have a leading `./`.
     const cleanCp = cp.replace(/^\.\//, '').replace(/\.(ts|tsx|js|jsx|mts|cts)$/, '');
-    const cleanImport = importPath.replace(/^\.+\//g, '').replace(/\.(ts|tsx|js|jsx|mts|cts)$/, '');
-    if (cleanImport === cleanCp || cleanImport.endsWith('/' + cleanCp)) {
-      return true;
-    }
+    const cpBasename = cleanCp.includes('/')
+      ? cleanCp.slice(cleanCp.lastIndexOf('/') + 1)
+      : cleanCp;
+
+    // Direct equality of normalized paths.
+    if (cleanImport === cleanCp) return true;
+    // Import path is a suffix of the contract path. Covers the common
+    // case: `../../convex/schema` → `convex/schema` matches the contract's
+    // `convex/schema.ts` because the contract path ends with the import.
+    if (cleanCp.endsWith('/' + cleanImport)) return true;
+    // Contract path is a suffix of the import (symmetric, rarer).
+    if (cleanImport.endsWith('/' + cleanCp)) return true;
+    // Single-segment import (`./fixtures` → `fixtures`) matches a
+    // contract path's basename — `e2e/fixtures.ts` has basename
+    // `fixtures`. Constrained to single-segment imports so we don't
+    // false-positive on e.g. `helpers` against an unrelated
+    // `some/other/helpers.ts`.
+    if (!cleanImport.includes('/') && importBasename === cpBasename) return true;
   }
   return false;
 }
