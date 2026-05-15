@@ -2388,3 +2388,117 @@ WOR-105 stuck; no action yet — operator may want to manually edit
 its tests once Piece 1 is shipped, OR reset and re-run if Piece 1's
 prompt change is sufficient to get the agent to do cleanup on the
 next pass.
+
+---
+
+## Entry — 2026-05-15, 00:30 CDT — The actual program (mermaid) vs. the YAML
+
+### The dev-loop in mermaid
+
+```mermaid
+flowchart TD
+    WriteTests[Write Tests] --> ExecuteTests[Execute Tests]
+    ExecuteTests --> Dev[Dev]
+    Dev --> Review[Review]
+    TestEdit[Test Edit] --> Review
+    Review -->|Approve| CreatePR[Create PR]
+    Review -->|Reject| Dev
+    Review -->|Test Needs Edits| TestEdit
+```
+
+Six states, seven transitions. That's the entire dev-loop after PR #31:
+
+- WriteTests → ExecuteTests → Dev → Review (linear opening)
+- Review has three outgoing transitions, picked by the verdict triad:
+  - `approve` → CreatePR (terminal)
+  - `reject` → Dev (retry impl)
+  - `test_needs_edits` → TestEdit (fix the test)
+- Dev → Review and TestEdit → Review both feed back to the same node
+
+This is *the actual program*. Every other shape in the YAML is
+mechanical bookkeeping to express this state machine without a
+loop primitive.
+
+### What the YAML actually contains for this
+
+~250 lines for the same six-state machine. The cost shows up in:
+
+1. **Five hand-unrolled slots.** Because Archon has no loop primitive,
+   each pass through the cycle is a copy of the previous slot's
+   nodes (dev-attempt-N, test-N, validate-N, review-dev-attempt-N,
+   parse-dev-review-N — and now also edit-tests-N). Five iterations =
+   five copies. Add a sixth attempt? Sixth copy of the entire body.
+2. **`when:` clauses repeated 4–5× per slot.** Every node in slot N
+   needs to know the prior slot's verdict to decide whether to fire.
+   Same boolean expression, copy-pasted everywhere.
+3. **No parentheses in `when:`.** A clause like
+   `(prior failed AND verdict=reject) OR verdict=test_needs_edits`
+   has to be expanded into all OR branches as full conjuncts.
+4. **`trigger_rule: all_done` for the fan-in.** When two action
+   nodes (dev-attempt-N, edit-tests-N) both feed into test-N, the
+   join has to be explicit. In mermaid it's just two inbound arrows
+   on the same node.
+
+The state-machine logic that drives the routing is ~10 lines of
+TypeScript in `task-parse-dev-review.ts`. The YAML around it is the
+plumbing.
+
+### What Archon primitives would collapse this
+
+A handful of features would let the YAML look like the mermaid.
+**Archon does have a `loop` primitive**, but its body is a single AI
+prompt that iterates until a `<promise>SIGNAL</promise>` /
+`until_bash` / `max_iterations` condition fires (see
+`guides/loop-nodes.md`). That's the right shape for "have one agent
+refine its output until done" — but it can't host a *multi-node
+subgraph* iteration, which is what the dev-loop actually is
+(dev-attempt → test → validate → review → parse, repeat). So the
+hand-unrolled 5 slots are still the only option today.
+
+1. **A subgraph-loop primitive.** A loop whose body is a *named
+   subgraph* of nodes, not a single prompt. The five hand-unrolled
+   slots collapse to one loop call over a 5-node body with
+   `until: verdict == 'approve' || attempts >= 5`. Distinct from
+   today's loop because the body has structure (multiple agents,
+   bash gates, fan-ins) instead of being a single AI invocation.
+2. **Typed `when:` predicates.** Either typed expressions (Archon
+   validates that `$parse-dev-review-1.output.verdict` exists and
+   what values it can take) or full TS functions. Eliminates the
+   silent-resolve-to-empty-string class of bug (PR #25, PR #28).
+3. **Parentheses in `when:`.** Same thing every other expression
+   language has. Stops the duplication of common conjuncts.
+4. **Enum-typed `output_format`.** Declare that a node emits one of
+   {approve, reject, test_needs_edits} and have the engine refuse
+   any other value at runtime. Catches the "third value the
+   consumers don't handle" class of bug (PR #28's NEEDS_DISCUSSION
+   orphan).
+5. **Named subgraphs / reusable subroutines** (independent of the
+   loop point above). "The dev-attempt/review chain" is structurally
+   the same regardless of which slot it runs in. A named subgraph
+   would let it be defined once and invoked.
+
+Each of these is a concrete Archon (Mode 1) backlog item with a
+motivating case from this run. Worth filing upstream when there's
+time.
+
+### Why the mirror in /home/user/ matters
+
+The program *is* the mermaid. The mirror in TypeScript would encode
+it identically — six functions, a switch on the verdict, a recursive
+or iterative call back to `Review`. ~30 lines of TypeScript for the
+same logic the YAML spends 250 lines on. Unit-testable in isolation.
+Stack-traceable on failure.
+
+The YAML keeps running in production; the mirror is for reasoning.
+Both encode the same state machine — the YAML is just a 10x more
+verbose dialect.
+
+### What's open
+
+PR #31 ships the verdict triad + the per-slot edit-tests branch.
+Once it merges:
+1. Reset WOR-105 → re-run. Reviewer should classify the cleanup
+   gap as `test_needs_edits` → routes to `edit-tests-2`.
+2. Then start the mirror in `/home/user/archie-mirror/` — pure TS,
+   no AI calls, deterministic stubs for action nodes. Validate
+   future workflow edits *before* shipping them.
