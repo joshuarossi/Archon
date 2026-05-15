@@ -1,0 +1,36 @@
+{
+  "attempt": 2,
+  "issue_key": "WOR-102",
+  "overall": "failed",
+  "gates": [
+    {
+      "name": "lint",
+      "status": "passed",
+      "blocking": false,
+      "relevant_to_changed_files": false,
+      "log": "\n> clarity@0.1.0 lint\n> eslint .\n\n"
+    },
+    {
+      "name": "typecheck",
+      "status": "failed",
+      "blocking": true,
+      "relevant_to_changed_files": true,
+      "log": "\n> clarity@0.1.0 typecheck\n> tsc --noEmit\n\nsrc/hooks/useCurrentUser.ts(9,29): error TS2339: Property 'users' does not exist on type '{}'.\n"
+    },
+    {
+      "name": "vitest",
+      "status": "passed",
+      "blocking": true,
+      "relevant_to_changed_files": true,
+      "log": "\n RUN  v2.1.9 /home/user/.archon/workspaces/joshuarossi/Clarity/worktrees/archon/task-wor-102\n\n ✓ tests/unit/privacyFilter.test.ts (30 tests) 15ms\n ✓ tests/unit/theme-tokens.test.ts (100 tests) 39ms\n ✓ tests/unit/prompts.test.ts (35 tests) 17ms\n ✓ tests/unit/compression.test.ts (20 tests) 14ms\n ✓ tests/unit/stateMachine.test.ts (27 tests) 12ms\n ✓ tests/unit/auth.test.ts (12 tests) 49ms\n ✓ tests/unit/errors.test.ts (41 tests) 18ms\n ✓ tests/unit/schema.test.ts (34 tests) 13ms\n ✓ tests/unit/errorHandler.test.ts (42 tests) 12ms\n ✓ tests/unit/schema-types.test.ts (2 tests) 4ms\n ✓ tests/unit/button.test.ts (13 tests) 7ms\n ✓ tests/unit/vite-config.test.ts (3 tests) 3ms\n ✓ tests/smoke/runner.test.ts (2 tests) 41ms\n\n Test Files  13 passed (13)\n      Tests  361 passed (361)\n   Start at  19:09:03\n   Duration  1.36s (transform 377ms, setup 0ms, collect 992ms, tests 245ms, environment 4ms, prepare 865ms)\n\n"
+    },
+    {
+      "name": "playwright",
+      "status": "skipped",
+      "blocking": false,
+      "relevant_to_changed_files": false,
+      "log": ""
+    }
+  ],
+  "generated_at": "2026-05-14T19:09:05.471Z"
+}

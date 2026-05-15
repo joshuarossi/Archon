@@ -1916,3 +1916,344 @@ terminated). Options for the existing PR:
 Going with manual merge for now; the followup fixes can be a
 follow-up ticket. Re-firing WOR-101 just to test the new routing
 costs more than it's worth.
+
+---
+
+## Entry — 2026-05-14, 20:35 CDT — WOR-102 re-run experiment
+
+### Context
+
+WOR-102 (App shell) ran end-to-end on attempt-1 and halted at
+`merge-pr`: synthesizer ruled REQUEST_CHANGES (AdminRoute null-user
+bypass, non-null assertion on `identity.email`, nested `<main>`
+landmark), auto-fix loop ran 4 attempts, post-fix-validation failed
+with `TS2345` in `convex/users.ts:17` — the fixer removed the `!`
+operator without adding a null guard, leaving `string | undefined`
+where `string` was required. The workflow correctly halted (the
+PR #28 NEEDS_DISCUSSION routing didn't trigger because this was
+REQUEST_CHANGES; the merge-pr gate's `when:` requires
+`post-fix-validation.passed == 'true'`, which was false).
+
+This is a **new failure class** the pipeline doesn't currently
+recover from: auto-fix introduces a regression → validation catches
+it → no retry branch, just halt with PR orphaned and no
+operator-facing signal. Logged elapsed time correctly via the new
+`all_done` fan-in from PR #28, but no comment, no label, no
+followup.
+
+### Discussion
+
+Long design conversation followed about how to handle this class.
+Three shapes considered, none committed:
+
+1. **Comment + transition Done.** "Done" stops meaning "merged" —
+   becomes "operator accepts." Awkward because downstream tickets
+   waiting on WOR-102 would unblock and run against `main` without
+   WOR-102's actual work.
+
+2. **Followup ticket onto same PR.** WOR-N spawns from WOR-102's
+   failure, works on the existing branch, adds commits to PR #13.
+   WOR-102 stays In Progress as the "container" until the PR
+   merges. Cleaner — uses Jira `Resolve` link semantics natively
+   (`WOR-N resolves WOR-102` ↔ `WOR-102 is resolved by WOR-N`).
+   When WOR-N completes, cascade-Done WOR-102.
+
+3. **Re-fire same ticket.** Same WOR-102, another task-implement
+   run with previous attempt's feedback as input. Closer to how
+   humans iterate. But trigger semantics are awkward — Jira state
+   machine doesn't naturally re-fire on no-op transitions.
+
+The synth-verdict-to-action map that came out of this:
+- APPROVE → merge
+- REQUEST_CHANGES → auto-fix loop
+- NEEDS_DISCUSSION + auto-fix candidates → spawn followup, move
+  to SfD (agent retries on same branch)
+- NEEDS_DISCUSSION + no auto-fix → spawn followup, leave Backlog
+  with `archon-blocked-human` (human takes over)
+
+Plus the new failure class:
+- REQUEST_CHANGES → auto-fix → post-fix-validation fails → ???
+  (today: silent halt; future: probably spawn followup too)
+
+None of this committed. Operator wants to gather a second data
+point before designing the recovery mechanism.
+
+### The decision
+
+**Reset WOR-102 and re-run it fresh.** Just to see what happens —
+deterministic-ish? Lands the same way? Lands cleanly this time?
+Hits a different failure? One data point isn't enough to know.
+
+Concrete reset:
+- Closed PR #13 with a comment pointing to the saved artifacts.
+- Deleted remote branch `archon/task-wor-102`.
+- Removed local worktree + branch.
+- Snapshotted attempt-1 to `.archon/experiments/wor-102-attempt-1/`
+  — full run artifacts (1.2MB), the PR snapshot JSON, the PR diff.
+- Posted Jira comment on WOR-102 summarizing attempt-1 outcome.
+- Transitioned WOR-102: In Progress → Backlog → Selected for
+  Development. Task-tests fired (run `6390973c...`).
+
+### What we'll learn
+
+- Determinism: does the synthesizer rule REQUEST_CHANGES with the
+  same findings, or does it ride a different path entirely?
+- Auto-fix regression: was the typecheck failure deterministic
+  (specific to this fixer's strategy), or random?
+- If attempt-2 lands cleanly: the failure was transient, and the
+  recovery problem is less urgent (re-run is the recovery).
+- If attempt-2 fails the same way: deterministic failure mode →
+  recovery design becomes the next priority.
+
+The new artifacts go in `.archon/experiments/wor-102-attempt-2/`
+when this run completes, for direct comparison.
+
+---
+
+## Entry — 2026-05-14, 21:50 CDT — WOR-102 attempt-2 outcome: deterministic failure, TS narrowing gotcha
+
+### Snapshot
+
+Run `03c9d80c1026d975363261233508c436` saved to
+`.archon/experiments/wor-102-attempt-2/`. PR #14 + diff captured.
+
+### Outcome
+
+**Identical terminal state to attempt-1:**
+
+|                     | attempt-1                       | attempt-2                       |
+|---------------------|---------------------------------|---------------------------------|
+| Synth verdict       | REQUEST_CHANGES                 | REQUEST_CHANGES                 |
+| Top HIGH finding    | non-null `!` on `identity.email`| non-null `!` on `identity.email`|
+| Auto-fix passed?    | typecheck failed                | typecheck failed                |
+| Typecheck error    | TS2345 `convex/users.ts:17`     | TS2345 `convex/users.ts:15`     |
+| Terminal node       | merge-pr skipped                | merge-pr skipped                |
+| PR state            | open                            | open                            |
+| log-elapsed ran?    | n/a (pre-PR #28)                | yes (via new all_done fan-in)   |
+
+**The failure mode is deterministic.** Re-running the ticket from
+scratch produced the same review verdict, on the same finding, with
+the same fix attempt, with the same typecheck regression in the
+same file. Re-firing is not a recovery mechanism for this class.
+
+### Why the auto-fix kept failing
+
+The agent's diff in `convex/users.ts` is actually *semantically
+correct* — it addresses the synthesizer's finding by replacing
+`identity.email!` with a proper guard:
+
+```ts
+const identity = await ctx.auth.getUserIdentity();
+if (!identity) return null;
+if (!identity.email) return null;  // narrows: string | undefined → string
+const user = await ctx.db
+  .query("users")
+  .withIndex("by_email", (q) => q.eq("email", identity.email))  // line 15
+  .unique();
+```
+
+This passes a human code review. It fails tsc because the
+`withIndex` callback `(q) => q.eq("email", identity.email)` is a
+**closure passed to another function**. TS's flow-narrowing of
+`identity.email` from `string | undefined` to `string` works
+*inside the function scope* but doesn't follow the value into the
+callback — TS pessimistically widens it back to `string | undefined`
+inside the closure, on the (correct) assumption that Convex's query
+builder might defer the callback's execution.
+
+This is a real TS gotcha that catches humans too. The fix is a
+3-line edit:
+
+```ts
+const email = identity.email;
+if (!email) return null;
+// ...
+.withIndex("by_email", (q) => q.eq("email", email))  // closes over `email`, not `identity.email`
+```
+
+Any human reviewer would write that comment in 10 seconds. The
+agent didn't get there.
+
+### Operator's read
+
+> "I would have merged this one, it seems fine, we addressed the
+> findings, why did the post-fix-validation fail?"
+
+The operator is right at the design-quality layer (the security
+issue *is* fixed; the code is no less correct than the original).
+But shipping it would break the typecheck gate, which is the
+*enforcement layer* underneath design review. We don't want main
+to ship with a tsc error — partly because CI would block it
+anyway, partly because downstream tickets would inherit a broken
+typecheck and not know which side caused it.
+
+### What this teaches us about recovery design
+
+Earlier we debated four-way verdict routing (APPROVE / R-C / N-D
++/− auto-fix candidates). This run argues that the *real* design
+question is **what happens when the auto-fix's diff is close, but
+not quite right.**
+
+Three options worth weighing:
+
+1. **Bounded retry with widening context.** Each retry attempt
+   gets the previous attempt's diff + the new error from
+   post-fix-validation. The fixer that just wrote the closure-bug
+   would see: "your guard at the top works structurally but TS
+   can't narrow across the callback. Extract to a local const."
+   That's the kind of feedback another retry plausibly fixes.
+   Costs: more tokens, longer wall-clock, but the retry budget can
+   be capped.
+
+2. **File the residual error as a followup ticket (with `Action
+   item` link) and merge.** Treats the residual typecheck error
+   like a MEDIUM/LOW finding that doesn't block the parent PR's
+   merge. Problem: this *would* let a tsc error reach main, which
+   we don't want. Unless the followup ticket is `archon-blocked-human`
+   and the merge happens only after the human resolves it.
+
+3. **Halt-for-human with a label + comment.** Today's behavior plus
+   a loud signal. The operator looks at the PR, writes the
+   3-line fix, merges. Cheap. The reviewer fleet already produced
+   all the context the operator needs.
+
+What I'd lean toward as a v1:
+- Try (1) once — give the fixer a second pass with the typecheck
+  error in its context.
+- If that fails, fall through to (3) — halt with `archon-needs-review`
+  label and a comment containing both the synth findings and the
+  validator's failure log.
+- (2) feels wrong: shipping known typecheck errors makes downstream
+  validation lie.
+
+But this is one ticket's data point. Want at least one more case
+where attempt-2 with widening context succeeds before treating it
+as a pattern.
+
+### Next concrete step
+
+Operator's call. Options:
+
+- **A.** Apply the 3-line fix to PR #14 by hand, push, merge.
+  Fastest. Lets the rest of the backlog flow.
+- **B.** Close PR #14, file a manual followup ticket with the
+  closure-narrowing context, see if the agent can solve it on the
+  followup.
+- **C.** Pause the experiment, design + ship the
+  widening-context-retry mechanism (option 1 above) before
+  unblocking WOR-102.
+
+A is the path of least resistance for keeping the backlog moving.
+B is a useful experiment for "can the agent solve this specific
+TS pattern with the right context." C is the real fix but blocks
+everything.
+
+---
+
+## Entry — 2026-05-14, 22:15 CDT — WOR-102 merged with debt; WOR-139 filed as the followup
+
+### What we did
+
+Discussed whether to merge PR #14 as-is or hold it. The objections
+to merging boiled down to "tsc error reaches main" — but that's a
+mostly-principled cost: Clarity CI already merges PRs with failing
+checks (every PR today has the Playwright "no tests found"
+failure), the validator's lint/typecheck attribution is
+diff-scoped (downstream tickets won't be blamed for an inherited
+error in convex/users.ts), and local devs running `tsc` see the
+error with the followup ticket linked. Concrete impact: low. Cost
+of NOT merging: hold the whole backlog while we design retry
+mechanisms.
+
+So: **merged PR #14** to Clarity main. WOR-102 stays In Progress
+(per operator instruction — don't close it until the followup
+lands). Filed **WOR-139** as a Bug-type ticket with:
+
+- Full closure-narrowing root cause analysis (TS doesn't follow
+  flow-narrowing across callback boundaries; Convex's withIndex
+  takes a callback the builder might defer).
+- The current failing code and the corrected code side-by-side
+  (extract `identity.email` to a local const before the closure
+  captures it).
+- Concrete ACs (`tsc --noEmit` passes; auth semantics preserved;
+  existing tests pass).
+- Explicit out-of-scope note (the other synth findings —
+  provider-nesting doc mismatch, env-var validation, e2e
+  data-testid — are separate concerns).
+- `Action item` Jira link from WOR-102 → WOR-139 (Jira shows on
+  WOR-139: "Action item from WOR-102"; on WOR-102: "Has action
+  item: WOR-139"). Lineage is visible without inventing a
+  parenting mechanism.
+
+Transitioned WOR-139 → Selected for Development. Router fired
+`bug-pipeline` (not `task-tests`) because WOR-139's issuetype is
+`Bug`, not `Task` — first time we've exercised that pipeline this
+session. Bug-pipeline grooms the bug, validates genuineness,
+generates contract + failing tests for the fix, then transitions
+to In Progress which fires task-implement. Same chain shape as
+the Task path, specialized intake.
+
+### What we're testing with WOR-139
+
+This is a different kind of agent task than what's been failing:
+
+- **Tickets so far** (WOR-95..WOR-103): "build X to satisfy spec
+  Y." The dev-attempt writes code from the contract; review fleet
+  finds issues; auto-fix tries to address them under repair
+  pressure (multiple findings at once, often subtle).
+- **WOR-139**: "apply this specific fix to this specific file."
+  The bug ticket includes the exact recommended diff in narrative
+  form. The agent should be doing pattern-matching, not invention.
+
+If the agent succeeds on WOR-139, we know the followup-ticket
+pattern is a viable recovery mechanism for cases like WOR-102.
+If it fails — even with this much hand-holding — we know we
+either need (a) widening-context retry, (b) a different fixer
+prompt, or (c) just accepting that some classes of issues are
+human-required.
+
+### The recovery design question, restated
+
+Earlier I sketched four options for "auto-fix introduces a
+regression":
+
+1. Bounded retry with widening context (each retry sees previous
+   diff + new error).
+2. File followup, merge parent.
+3. Halt-for-human.
+4. Just merge anyway (this run's choice for WOR-102 → ship-with-
+   known-debt via Action-item-linked followup).
+
+The operator floated retries as an addition, not a replacement,
+which is the right framing. The natural composition:
+
+```
+synth REQUEST_CHANGES → implement-fixes → post-fix-validation
+                                                  ↓ failed
+                                          implement-fixes-2 (sees attempt-1 diff + tsc error)
+                                                  ↓
+                                          post-fix-validation-2
+                                                  ↓ failed (after N retries)
+                                          file followup + merge parent
+                                                  ↓
+                                          followup goes through normal pipeline
+```
+
+The retry budget is the design knob. Today's dev-attempt loop
+caps at 3 fix-after-validate-N nodes; the post-PR loop has 1.
+Worth lifting the post-PR loop to match.
+
+Not building it yet — want to see WOR-139's outcome first. If
+the agent can land a hand-held bug ticket reliably, the
+followup-ticket route is the cheaper mechanism (no new pipeline
+nodes; reuses existing bug-pipeline + task-implement); the
+widening-context retries are extra credit. If the agent fails
+WOR-139 too, retries become the next priority.
+
+### What's running
+
+- `cbd45f33d16db168c3c1d227b1d76ef8` — bug-pipeline on WOR-139.
+- WOR-102 still In Progress, waiting on WOR-139 to land.
+- Saved artifacts: `.archon/experiments/wor-102-attempt-1/` and
+  `.archon/experiments/wor-102-attempt-2/` for direct comparison
+  if WOR-139's pipeline produces results worth comparing too.

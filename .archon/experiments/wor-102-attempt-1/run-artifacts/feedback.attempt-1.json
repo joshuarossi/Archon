@@ -1,0 +1,36 @@
+{
+  "attempt": 1,
+  "issue_key": "WOR-102",
+  "overall": "failed",
+  "gates": [
+    {
+      "name": "lint",
+      "status": "passed",
+      "blocking": false,
+      "relevant_to_changed_files": false,
+      "log": "\n> clarity@0.1.0 lint\n> eslint .\n\n"
+    },
+    {
+      "name": "typecheck",
+      "status": "failed",
+      "blocking": false,
+      "relevant_to_changed_files": false,
+      "log": "\n> clarity@0.1.0 typecheck\n> tsc --noEmit\n\ntests/unit/errorHandler.test.ts(7,8): error TS2307: Cannot find module '../../src/lib/errorHandler' or its corresponding type declarations.\n"
+    },
+    {
+      "name": "vitest",
+      "status": "failed",
+      "blocking": true,
+      "relevant_to_changed_files": true,
+      "log": "\n RUN  v2.1.9 /home/user/.archon/workspaces/joshuarossi/Clarity/worktrees/archon/task-wor-102\n\n ✓ tests/unit/privacyFilter.test.ts (30 tests) 15ms\n ✓ tests/unit/prompts.test.ts (35 tests) 15ms\n ✓ tests/unit/theme-tokens.test.ts (100 tests) 38ms\n ✓ tests/unit/compression.test.ts (20 tests) 14ms\n ✓ tests/unit/stateMachine.test.ts (27 tests) 12ms\n ✓ tests/unit/auth.test.ts (12 tests) 46ms\n ✓ tests/unit/errors.test.ts (41 tests) 17ms\n ✓ tests/unit/schema.test.ts (34 tests) 13ms\n ❯ tests/unit/errorHandler.test.ts (0 test)\n ✓ tests/unit/schema-types.test.ts (2 tests) 4ms\n ✓ tests/unit/button.test.ts (13 tests) 7ms\n ❯ tests/unit/vite-config.test.ts (3 tests | 1 failed) 6ms\n   × AC: Vite config — build target and env support > sets build.target to es2020 3ms\n     → expected undefined to be defined\n ✓ tests/smoke/runner.test.ts (2 tests) 32ms\n\n⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯\n\n FAIL  tests/unit/errorHandler.test.ts [ tests/unit/errorHandler.test.ts ]\nError: Failed to load url ../../src/lib/errorHandler (resolved id: ../../src/lib/errorHandler) in /home/user/.archon/workspaces/joshuarossi/Clarity/worktrees/archon/task-wor-102/tests/unit/errorHandler.test.ts. Does the file exist?\n ❯ loadAndTransform node_modules/vitest/node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:51969:17\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯\n\n⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯\n\n FAIL  tests/unit/vite-config.test.ts > AC: Vite config — build target and env support > sets build.target to es2020\nAssertionError: expected undefined to be defined\n ❯ tests/unit/vite-config.test.ts:26:30\n     24|   it(\"sets build.target to es2020\", () => {\n     25|     // The contract specifies: build: { target: \"es2020\" } per NFR-BRO…\n     26|     expect(viteConfig.build).toBeDefined();\n       |                              ^\n     27|     expect(viteConfig.build?.target).toBe(\"es2020\");\n     28|   });\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯\n\n Test Files  2 failed | 11 passed (13)\n      Tests  1 failed | 318 passed (319)\n   Start at  19:04:08\n   Duration  1.40s (transform 387ms, setup 0ms, collect 1000ms, tests 220ms, environment 4ms, prepare 930ms)\n\n"
+    },
+    {
+      "name": "playwright",
+      "status": "skipped",
+      "blocking": false,
+      "relevant_to_changed_files": false,
+      "log": ""
+    }
+  ],
+  "generated_at": "2026-05-14T19:04:10.145Z"
+}

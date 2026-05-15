@@ -1,0 +1,17 @@
+.changelog/wor-102.md
+README.md
+convex/_generated/api.d.ts
+convex/users.ts
+docs/app-shell.md
+docs/contracts/wor-102.md
+docs/errors.md
+package-lock.json
+package.json
+src/App.tsx
+src/components/layout/AdminRoute.tsx
+src/components/layout/LoadingSpinner.tsx
+src/components/layout/ProtectedRoute.tsx
+src/components/layout/TopNav.tsx
+src/lib/errorHandler.ts
+src/main.tsx
+src/vite-env.d.ts

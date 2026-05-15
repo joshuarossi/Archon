@@ -1,0 +1,36 @@
+{
+  "attempt": 4,
+  "issue_key": "WOR-102",
+  "overall": "failed",
+  "gates": [
+    {
+      "name": "lint",
+      "status": "passed",
+      "blocking": false,
+      "relevant_to_changed_files": false,
+      "log": "\n> clarity@0.1.0 lint\n> eslint .\n\n"
+    },
+    {
+      "name": "typecheck",
+      "status": "failed",
+      "blocking": true,
+      "relevant_to_changed_files": true,
+      "log": "\n> clarity@0.1.0 typecheck\n> tsc --noEmit\n\nconvex/users.ts(17,51): error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'string'.\n  Type 'undefined' is not assignable to type 'string'.\n"
+    },
+    {
+      "name": "vitest",
+      "status": "passed",
+      "blocking": true,
+      "relevant_to_changed_files": true,
+      "log": "\n RUN  v2.1.9 /home/user/.archon/workspaces/joshuarossi/Clarity/worktrees/archon/task-wor-102\n\n ✓ tests/unit/privacyFilter.test.ts (30 tests) 13ms\n ✓ tests/unit/prompts.test.ts (35 tests) 16ms\n ✓ tests/unit/theme-tokens.test.ts (100 tests) 35ms\n ✓ tests/unit/compression.test.ts (20 tests) 16ms\n ✓ tests/unit/stateMachine.test.ts (27 tests) 12ms\n ✓ tests/unit/auth.test.ts (12 tests) 47ms\n ✓ tests/unit/schema.test.ts (34 tests) 11ms\n ✓ tests/unit/errors.test.ts (41 tests) 15ms\n ✓ tests/unit/errorHandler.test.ts (42 tests) 17ms\n ✓ tests/unit/button.test.ts (13 tests) 7ms\n ✓ tests/unit/schema-types.test.ts (2 tests) 4ms\n ✓ tests/unit/vite-config.test.ts (3 tests) 3ms\n ✓ tests/smoke/runner.test.ts (2 tests) 30ms\n\n Test Files  13 passed (13)\n      Tests  361 passed (361)\n   Start at  19:24:43\n   Duration  1.35s (transform 415ms, setup 0ms, collect 952ms, tests 228ms, environment 3ms, prepare 898ms)\n\n"
+    },
+    {
+      "name": "playwright",
+      "status": "skipped",
+      "blocking": false,
+      "relevant_to_changed_files": false,
+      "log": ""
+    }
+  ],
+  "generated_at": "2026-05-14T19:24:44.683Z"
+}

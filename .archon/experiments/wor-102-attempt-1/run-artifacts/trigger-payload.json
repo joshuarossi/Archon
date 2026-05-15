@@ -1,0 +1,12 @@
+{
+  "event": "transition",
+  "issue_key": "WOR-102",
+  "project": "WOR",
+  "codebase_cwd": "/home/user/.archon/workspaces/joshuarossi/Clarity/source",
+  "issue_type": "Task",
+  "summary": "App shell — Vite + React + ConvexProvider + AuthProvider + routing",
+  "status": "In Progress",
+  "from_status": "Selected for Development",
+  "to_status": "In Progress",
+  "actor": "Josh Rossi"
+}
