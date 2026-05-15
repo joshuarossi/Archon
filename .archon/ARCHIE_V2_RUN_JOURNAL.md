@@ -2257,3 +2257,134 @@ WOR-139 too, retries become the next priority.
 - Saved artifacts: `.archon/experiments/wor-102-attempt-1/` and
   `.archon/experiments/wor-102-attempt-2/` for direct comparison
   if WOR-139's pipeline produces results worth comparing too.
+
+---
+
+## Entry — 2026-05-14, 23:40 CDT — WOR-105 stuck on test-isolation bug; design discussion captured
+
+### What we found
+
+WOR-105 (Shared UI primitives) ran 5 dev-attempts and 4 fix-after-validate
+retries before halting at `implementation-quality-final` — `generate-docs`,
+`open-pr`, and everything downstream skipped. No active workflow, no PR,
+ticket In Progress. Same general silhouette as WOR-102's failure mode but
+at a different layer.
+
+Diagnosis: vitest fails on `tests/unit/partyAvatar.test.tsx` with
+`Unable to find an element with the text: AR. There are 2 matching
+elements...`. Same component renders three times in an `it.each` block,
+then a fourth time in the next test — without `cleanup()` between
+tests, `screen.getByText("AR")` finds multiple nodes.
+
+**It's a test-isolation bug, not an implementation bug.** The test file is
+missing `afterEach(cleanup)` (or a project-level `setupFiles` that
+registers it globally). The implementation is correct; the test
+infrastructure is wrong.
+
+### Why test-gen + test-review didn't catch it
+
+- **Lint passed.** No syntax violation.
+- **Typecheck passed.** The validator's contract-aware mode counted 8
+  expected `TS2307` errors (imports of not-yet-existing contract paths)
+  and 0 unexpected errors. Clean.
+- **Test-review passed.** The reviewer's verdict JSON has categories for
+  `coverage_gaps`, `weak_tests`, `lint_typecheck_risks`, `gaming_risks`,
+  `selector_conflicts`, `unflushed_timer_tests`,
+  `typescript_escape_hatches`, `required_repairs` — but **no category
+  for test isolation / DOM cleanup**. The structural inspection wouldn't
+  notice anything wrong; each test renders + asserts, no obvious smell.
+
+The bug is *latent*: at red state the imports don't resolve, so vite
+can't load the test bodies, so `screen.getByText("AR")` never executes
+at baseline-test. It only surfaces after dev-attempt-1 creates the
+implementation files — and by then the cage forbids the only fix.
+
+### Operator's proposed plan
+
+Two-part design, captured here for debate after WOR-107 lands:
+
+**Piece 1.** Add explicit guidance to test-gen and test-review prompts
+about state isolation between tests. Framework-agnostic but specific
+enough to actually check (DOM cleanup, mock restoration, temp dirs,
+DB state). Gives the agent a chance to do the right thing in the
+first place AND gives the reviewer a category to flag when it doesn't.
+
+**Piece 2.** Widen dev-review verdict from binary
+(`passed` true/false) to ternary:
+1. `approve` — implementation passes, go to PR creation.
+2. `reject` — implementation has issues, next dev-attempt (cage held).
+3. `test_needs_edits` — the *test* is structurally broken; route to a
+   new "edit-tests" node whose job is to fix the test infrastructure
+   bug (does NOT change assertions or what the test is testing for),
+   then restart the dev cycle.
+
+The "edit-tests" node is not breaking the cage — its job is to edit
+tests, same side of the line as test-gen. The cage rule is "the dev
+agent can't edit tests"; the test-edit agent operates on its own side.
+
+Today we get NO output for the "test_needs_edits" case — it falls
+through as a `reject`, the dev agent thinks the impl is wrong (it's
+not), tries to "fix" the impl, fails again, repeats N times. 5 attempts
+later, halted with no recovery path. That's an *unhandled exception*
+in the workflow program.
+
+### The meta-discussion: Archon is a programming language
+
+Operator's framing, which I think is right: we're not writing
+configuration, we're writing a program. The YAML has control flow
+(`when:`), input/output passing (`$node.output.field`), state
+machines (the synthesizer verdict triad), event handlers (Jira
+transitions firing webhooks → router → workflow). Every bug we've
+shipped today was a control-flow bug, not an AI bug:
+- Silent SKIP on a missing dir (PR #25)
+- Three-state enum with two-state routing (PR #28)
+- Missing retry loop after post-fix-validation failure (PR #29)
+- Sub-process incorrectly triggering parent's sweep (PR #30)
+
+All of these are bugs a unit test against the workflow's routing
+logic would have caught instantly. None of them needed Claude to
+diagnose — they needed `expect(simulate({synth: 'needs_discussion'}))
+.toReach('flag-for-human-review')`.
+
+**Operator's proposal: build a TypeScript mirror.** A sibling .ts file
+per workflow that encodes the same control flow with deterministic
+stubs replacing agent calls. Run normal tests, see normal stack
+traces, reason in normal tools. Drift from YAML is acceptable in
+small ways — the mirror is "documentation that runs", not a bit-for-
+bit replica. Worth implementing for `task-implement.yaml` (~50 nodes
+now, 4 merge paths, retry loops, cascades, conditional fan-ins —
+i.e., a full program).
+
+**Friction points with Archon's current primitives** that the mirror
+would also illuminate:
+1. `when:` expressions are stringly-typed; typos resolve to `''`
+   silently. Typed predicates would eliminate the silent-SKIP class.
+2. No parentheses in `when:` — forces duplicating common factors
+   across OR branches.
+3. `output_format` is optional; emitted JSON isn't schema-validated.
+   Enum-typed outputs would catch every "third value the consumers
+   don't handle" bug.
+4. Nodes are flat. Retry-3 loops are 6 nodes; should be 1 node with
+   `maxAttempts: 3`.
+5. No first-class parent/child workflow link. The cascade lives as
+   runtime conditional logic in `jira-task-done.ts`.
+
+These are real Mode 1 backlog items, each with a concrete motivating
+case from this run.
+
+### Plan after WOR-107 lands
+
+Debate order:
+- Do Piece 1 (small, low risk, framework-agnostic prompt nudge)
+- Then Piece 2 (verdict widening + edit-tests node — bigger surface)
+- Then mirror (lives in `/home/user/`, not part of the live system,
+  it's a thinking tool)
+- Then evaluate which Archon primitives to lobby for upstream.
+
+### What's running
+
+WOR-107 (Playwright infrastructure) task-tests in flight.
+WOR-105 stuck; no action yet — operator may want to manually edit
+its tests once Piece 1 is shipped, OR reset and re-run if Piece 1's
+prompt change is sufficient to get the agent to do cleanup on the
+next pass.
