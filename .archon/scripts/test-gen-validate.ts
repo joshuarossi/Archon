@@ -222,11 +222,38 @@ function parseTscOutput(stdout: string): TscError[] {
  * Classify a tsc error as expected (red-state, ok) or unexpected
  * (real defect, hard fail).
  *
- * Expected:
- *   - TS2307 "Cannot find module 'X'" where X resolves to a
- *     contract-promised path.
+ * Expected (two shapes):
+ *
+ *   A. TS2307 "Cannot find module 'X'" where X resolves to a
+ *      contract-promised path. This is the *direct-import* shape:
+ *      a test does `import { x } from "../../convex/admin/templates"`
+ *      and that file does not exist yet at red state.
+ *
+ *   B. TS2339 "Property 'P' does not exist on type ..." where P is a
+ *      directory/file segment directly under a Convex `convex/` root
+ *      that the contract promises to create. This is the *Convex
+ *      api-object* shape: Convex tests never import functions
+ *      directly — they access them as properties on the single
+ *      generated `api` object (`api.admin.templates.listAll`). At red
+ *      state the regenerated `api` has no `admin` namespace yet
+ *      (because `convex/admin/` doesn't exist), so tsc emits TS2339
+ *      on the FIRST missing segment (`admin`). A correct Convex
+ *      red-state test referencing contract-promised-but-not-yet-built
+ *      functions produces TS2339, never TS2307 — the classifier must
+ *      model both or it wrongly rejects correct tests (see WOR-132
+ *      run journal entry).
  *
  * Everything else is unexpected.
+ */
+function isExpectedRedStateError(err: TscError, contractPaths: string[]): boolean {
+  return (
+    isExpectedRedStateImport(err, contractPaths) ||
+    isExpectedRedStateConvexApiProperty(err, contractPaths)
+  );
+}
+
+/**
+ * Shape A — TS2307 cannot-find-module against a contract-promised path.
  *
  * Two flavors of import to handle:
  *
@@ -243,7 +270,7 @@ function parseTscOutput(stdout: string): TscError[] {
  *      to a sibling of the importing file, so if any contract path's
  *      basename equals the single-segment import, accept.
  */
-function isExpectedRedStateError(err: TscError, contractPaths: string[]): boolean {
+function isExpectedRedStateImport(err: TscError, contractPaths: string[]): boolean {
   if (err.code !== 'TS2307') return false;
   const moduleMatch = err.message.match(/Cannot find module ['"]([^'"]+)['"]/);
   if (!moduleMatch) return false;
@@ -280,6 +307,51 @@ function isExpectedRedStateError(err: TscError, contractPaths: string[]): boolea
     // false-positive on e.g. `helpers` against an unrelated
     // `some/other/helpers.ts`.
     if (!cleanImport.includes('/') && importBasename === cpBasename) return true;
+  }
+  return false;
+}
+
+/**
+ * Shape B — TS2339 "Property 'P' does not exist on type ..." where P is
+ * a segment directly under a Convex `convex/` root that the contract
+ * promises to create.
+ *
+ * Convex generates a single `api` object whose shape mirrors the
+ * `convex/` directory tree: `convex/admin/templates.ts` exporting
+ * `listAll` is reached as `api.admin.templates.listAll`. At red state
+ * the contract-promised module doesn't exist, so the regenerated `api`
+ * lacks the namespace and tsc reports TS2339 on the FIRST missing
+ * segment — e.g. `Property 'admin' does not exist on type '{ users:
+ * ... }'` for a reference to `api.admin.templates.listAll`.
+ *
+ * Tightness: we accept ONLY when the missing property name equals the
+ * first path segment beneath a `convex/` contract path (the namespace
+ * root the contract is about to create). A genuine property typo on an
+ * EXISTING namespace (e.g. `api.users.mee`) produces TS2339 with
+ * property `mee`, which is not a `convex/`-level contract segment, so
+ * it stays correctly classified as unexpected. We do not try to walk
+ * deeper property chains — the first missing segment is sufficient and
+ * keeps the rule conservative.
+ */
+function isExpectedRedStateConvexApiProperty(
+  err: TscError,
+  contractPaths: string[],
+): boolean {
+  if (err.code !== 'TS2339') return false;
+  const propMatch = err.message.match(
+    /Property ['"]([^'"]+)['"] does not exist on type/,
+  );
+  if (!propMatch) return false;
+  const missingProp = propMatch[1];
+
+  // First path segment beneath a `convex/` contract path. For
+  // `convex/admin/templates.ts` → `admin`; for `convex/schema.ts` →
+  // `schema`. Only Convex-rooted contract paths participate — this
+  // shape is Convex-`api`-object specific.
+  for (const cp of contractPaths) {
+    const clean = cp.replace(/^\.\//, '');
+    const m = clean.match(/^convex\/([^/]+?)(?:\/|\.[a-z]+$|$)/);
+    if (m && m[1] === missingProp) return true;
   }
   return false;
 }
@@ -343,11 +415,46 @@ const typecheckResult = await runScript('typecheck', typecheckLog);
 // Parse tsc output for classification — even if typecheck "passed",
 // there may still be informational output. We only care about errors.
 const tscErrors = parseTscOutput(typecheckResult.stdout);
+
+// File-scoped causal red-state rule (WOR-132 journal entry):
+//
+// A correct Convex test that references a contract-promised-but-not-
+// yet-built namespace (`api.admin.templates.create`) produces ONE
+// TS2339 on the missing namespace root (`admin`) PLUS a cascade of
+// further TS2339s — every `result.globalGuidance` etc. fails because
+// the absent `api.admin` collapses the inferred return type to a
+// fallback (the `users` doc type bleeding everywhere). Those cascade
+// errors are causally downstream of the single missing namespace, not
+// independent defects.
+//
+// So: a test file is "in red state for a contracted namespace" if it
+// has at least one *anchor* error proving a contract module is absent
+// — either a TS2307 cannot-find-module on a contract path, or a
+// TS2339 on a `convex/` contract namespace root. In such a file ALL
+// of its TS2339s are treated as expected (the cascade). Files with no
+// anchor keep the strict per-error classification, so genuine field
+// typos in green-state tests are still caught.
+const redStateFiles = new Set<string>();
+for (const err of tscErrors) {
+  if (
+    isExpectedRedStateImport(err, contractPaths) ||
+    isExpectedRedStateConvexApiProperty(err, contractPaths)
+  ) {
+    redStateFiles.add(err.file);
+  }
+}
+
 const expected: TscError[] = [];
 const unexpected: TscError[] = [];
 for (const err of tscErrors) {
-  if (isExpectedRedStateError(err, contractPaths)) expected.push(err);
-  else unexpected.push(err);
+  if (isExpectedRedStateError(err, contractPaths)) {
+    expected.push(err);
+  } else if (err.code === 'TS2339' && redStateFiles.has(err.file)) {
+    // Cascade error in a file with a proven-absent contract namespace.
+    expected.push(err);
+  } else {
+    unexpected.push(err);
+  }
 }
 
 // A test-gen typecheck "passes" iff:
