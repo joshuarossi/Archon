@@ -3230,3 +3230,242 @@ whole time; the plumbing under it had a field-name bug, a
 missing-Epic bug, and a lineage-assumption bug, each found only
 by looking at the actual artifacts (orphaned ticket, empty epic
 board, the `Merge branch` commit), never from the logs alone.
+
+---
+
+## Entry — 2026-05-16, 02:50 CDT — POST-MORTEM: the WOR-121 → WOR-142 followup-bug cascade (4 bugs, 1 recovery)
+
+> **Note on the entry above.** The preceding "Two bugs in the
+> autonomous followup-bug pattern" section was written
+> *mid-investigation*, before we had the cascade's actual stderr.
+> It is left intact as the historic record of what we believed at
+> that moment. It is **superseded but not corrected in place** —
+> this entry is the complete, corrected account. Reading the two
+> in sequence is itself instructive: it shows the diagnosis being
+> wrong (3 bugs → actually 4; "redundant re-merge" → actually
+> "merge-conflict failure that fell through to the sweep") until
+> the artifact forced the correction. Methodological point worth
+> keeping: **three of my four intermediate root-cause claims in
+> this incident were wrong and were each only caught by going
+> back to the artifact.** Genchi Genbutsu is not a slogan here.
+
+### 1. What the system was trying to do (and got right)
+
+WOR-121 (CaseDetail orchestrator page) was a **good ticket**.
+Dev-loop converged at attempt-4, production code judged correct,
+almost all tests green. The post-PR synthesizer flagged one
+residual item: the `ForbiddenRedirect` component should pass
+error state to `navigate()`, and a test assertion needed to
+match. The 3-retry post-fix-validation loop fixed the production
+side but couldn't close the test-assertion coordination in
+budget.
+
+At that point the **autonomous followup-bug decision logic did
+exactly the right thing**: don't merge with an open concern,
+don't burn infinite retries, don't silently halt — decompose the
+residual into a precisely-scoped followup bug (**WOR-142**) and
+let the cascade reconcile the parent when the followup lands.
+That judgment was correct the entire time. Every failure below
+is in the *plumbing under* that correct decision, not the
+decision itself.
+
+### 2. The four bugs, in the order they bit
+
+**Bug 1 — filer read the wrong `createIssue` field. (fixed PR #43, merged)**
+`task-file-followup-bug.ts` read jira-tool's result as `{ key }`;
+jira-tool returns `{ issueKey }`. `newKey` was `undefined`, so
+`createIssueLink` / `transitionIssue` threw
+`assertIssueKey(undefined)`, were swallowed by their non-fatal
+try/catch, and WOR-142 was **orphaned**: created but unlinked,
+stuck in Backlog. *My first wrong theory:* "creds stripped in a
+foreign cwd." The operator killed it in one line — the process
+*created a Jira ticket* in that cwd, so it demonstrably had
+creds; an auth story was incoherent. Real cause found by reading
+the script. Fixed: read `.issueKey` + fail-loud guard.
+
+**Bug 2 — filer never set the Epic parent. (fixed PR #44, merged)**
+Even once manually linked, WOR-142 had no Epic parent, so it was
+invisible in the WOR-90 ("Clarity — v1") epic board despite
+being correctly `Action item`-linked and running. The operator
+spotted this from the board ("it isn't a child of the epic"),
+not from any log. PR #44: filer resolves the parent's Epic
+(`getIssue` `fields:['parent']`) and passes `parentKey` at
+creation; best-effort (Epic-resolution failure files without an
+Epic rather than blocking — the link is load-bearing, the Epic
+parent is board-visibility only).
+
+**Bug 3 — cascade assumed lineage instead of verifying main. (fixed PR #45, merged)**
+Surfaced by the operator's sharpest question: *"how can the bug
+ticket fix code ON THE PARENT, if the parent's code is not
+merged, and the bug ticket is working off main?"* Reading
+WOR-142's branch answered it: `6bce889 Merge branch
+'archon/task-wor-121' into archon/task-wor-142`. The followup's
+`task-implement` **bases its branch on the parent's branch** (it
+must, to see and fix the parent's not-yet-merged code). So the
+followup PR is a **superset** of the parent PR — merging the
+followup lands the parent's commits on main too. The cascade in
+`jira-task-done.ts` nevertheless ran `gh pr merge --squash` on
+the parent PR *unconditionally*. PR #45: cascade now verifies
+`git diff origin/main...origin/<parentBranch>` (content diff,
+squash-robust) — empty ⇒ close parent PR as **superseded**;
+non-empty ⇒ squash-merge as before. Either path transitions
+parent Done + skips sweep. Structured output carries
+`parent_pr_disposition`.
+
+**Bug 4 — a failed cascade falls through to the sweep. (NOT fixed — see §5, deliberate)**
+This is the one the earlier section missed entirely, because it
+only appears in the cascade's *failure* path and we hadn't read
+the stderr yet. The cascade body is wrapped in
+`try { … process.exit(0) } catch (e) { log("Cascade failed …
+Falling through to normal sweep"); }`. The `process.exit(0)`
+that skips the sweep is **inside the success path**. So when
+`gh pr merge` *throws*, the catch logs and execution **continues
+into the sweep**, which promotes a ticket — exactly as if the
+followup's Done had legitimately completed a logical unit. It
+had not: the parent never transitioned.
+
+### 3. What actually happened on the night (the real failure mode)
+
+WOR-142 converged, its PR **#36 squash-merged to main** at
+07:15:11Z (carrying WOR-142's fix *and*, via the merge-in,
+WOR-121's commits). WOR-142 → Done fired `jira-task-done`. The
+cascade (still on **pre-#45 code** — the fixes were not yet
+merged) found WOR-121's PR #35 and ran
+`gh pr merge 35 --squash`. GitHub refused:
+
+```
+✗ Cascade failed: Command failed: gh pr merge 35 --squash …
+Message: Pull Request has merge conflicts
+. Falling through to normal sweep.
+  WOR-122: no remaining blockers — promoting.
+```
+
+The conflict was real and *diagnostic*: main's
+`case-detail-page.test.tsx` (with WOR-142's corrected assertion,
+landed via #36) vs PR #35's stale pre-fix version of the same
+file. Bug 4 then fired: cascade failure → fell through → **swept
+and promoted WOR-122**. Net state: WOR-142 Done; WOR-121 stuck
+In Progress with a conflicting, now-pointless PR #35; WOR-122
+wrongly promoted (though, per operator, WOR-122 was the correct
+next ticket anyway — the *mechanism* was wrong even though the
+*outcome ticket* was acceptable).
+
+**Two more wrong theories along the way, both caught by the
+artifact:** (a) I claimed the `route-task-done` node had
+*skipped* on an Epic-type guard — wrong; I'd misread two
+adjacent log lines, the node ran. (b) I claimed WOR-121's code
+was fully and identically on main so #35 was a trivial no-op —
+then a `git diff --stat A..B` (two-dot) scared me into the
+opposite claim that 1,261 lines were missing — both wrong; the
+correct `A...B` (three-dot) showed the feature file *is* on main
+(309 lines) and #35's only real delta was the 4-line stale test
+assertion. Lesson reinforced: even the diff syntax has to be
+verified, not assumed.
+
+### 4. The recovery (operational, Mode 3)
+
+Verified from artifacts that WOR-121's code was genuinely on
+main (feature file present; only delta = stale test). So the
+correct end state was: **close #35 as superseded, WOR-121 →
+Done, no new promotion** (WOR-122 already occupied the WIP=1
+slot and was legitimately running).
+
+The non-obvious obstacle, and the reusable recipe: **there is no
+single knob to make one Done event skip the sweep.** Only a
+*successful action-item cascade* skips it (`process.exit(0)`).
+The operator's insight defeated my first idea (pause-label the
+next candidate) — the sweep JQL is `labels not in
+("archon-blocked-pending")`, so pausing one candidate just makes
+the sweep **promote the next unpaused one**. The label moves the
+promotion, it doesn't suppress it. The only way to make the
+sweep promote *nothing* is to make its candidate set *empty*:
+
+> **Recipe — force a ticket to Done without triggering a
+> promotion** (also added to `ARCHIE_PIPELINE.md`):
+> 1. Do the slow, independent work first (close the PR, comment
+>    the ticket) — no Backlog pause needed yet.
+> 2. Snapshot **all** Backlog non-Epic tickets *without*
+>    `archon-blocked-pending` → set `S` (persist to disk).
+> 3. Add `archon-blocked-pending` to every ticket in `S`.
+> 4. Verify the sweep JQL returns **zero** rows.
+> 5. Transition the target ticket → Done. Its sweep finds
+>    nothing, promotes nothing.
+> 6. Remove `archon-blocked-pending` from **exactly** `S` (not
+>    from any ticket that had it before — that's why you snapshot
+>    the *without-label* set, not "all Backlog").
+> 7. Verify zero leftover pause labels; prior state restored.
+>
+> Race window (steps 3–6 the whole Backlog is paused) is
+> acceptable: if another Done fires in-window it just promotes
+> nothing, and you manually promote the next ticket later.
+> Operator explicitly judged this fine — don't over-engineer the
+> window.
+
+Executed exactly this: #35 closed (superseded, branch deleted
+via the classic `GH_TOKEN` — the fine-grained PAT 403s on ref
+delete, per CLAUDE.md), WOR-121 commented + linked, 15 tickets
+(WOR-123‥137) paused, sweep verified empty, WOR-121 → Done
+(`tickets_promoted":[]` confirmed from the run log), 15 unpaused,
+zero leftover labels, WOR-122 still the lone in-flight run.
+Clean.
+
+### 5. Why Bug 4 is being left unfixed (deliberate — and the fall-through is arguably *correct*)
+
+Two independent reasons, the second load-bearing:
+
+**(a) The trigger is now removed.** The fall-through-to-sweep
+path is only reachable when the cascade **throws**. The only
+thing that threw in production was `gh pr merge` on a conflicting
+parent PR. PR #45 eliminates that call for this scenario (detect
+parent-code-on-main → close-as-superseded, never merge), so the
+conflict throw no longer happens.
+
+**(b) — the real reason — in that failure scenario, continuing
+to process is the behavior we *want*, not a bug.** Operator's
+framing: a failed cascade of this kind means the parent's work
+is *already done and merged* — that is *precisely why* the
+parent PR conflicted (its code is on main). So the only thing
+left is **bookkeeping cleanup** (close a redundant PR, transition
+a ticket). Halting the pipeline / failing loud over pure cleanup
+would be *worse* than letting the line keep moving: the
+substantive work is delivered, and a human can do the trivial
+ticket-state tidy-up out of band. Under that lens the
+fall-through to the sweep is not a misfeature at all — it is
+"the real work shipped; keep processing; cleanup is not a
+pipeline-stopping event." Promoting the next ticket is the
+correct call.
+
+So Bug 4 is not being fixed because (b) makes the *behavior*
+desirable in its only realistic trigger condition, and (a) makes
+that condition rare anyway. Recorded as an **explicit reasoned
+decision** so a future reader doesn't "discover" it and assume
+it was missed. Caveat to revisit if it ever changes: this
+reasoning holds *specifically because* the failed-cascade
+scenario implies the parent's work is already merged. If a
+future throw source in the cascade can fire while the parent
+work is **not** yet on main, the fall-through would promote a
+ticket while real work is still stranded — at that point (b) no
+longer holds and the catch must fail loud instead.
+
+### 6. Lessons
+
+- **A followup that edits a parent's unmerged code is nested,
+  not independent.** Its branch contains the parent's. Any
+  automation acting on the parent PR afterward must verify the
+  state of `main`, never assume disjoint diffs.
+- **Genchi Genbutsu, literally.** 3 of 4 of my mid-stream
+  root-cause claims were wrong and were each only corrected by
+  going back to the actual artifact (the script, the branch
+  commit, the cascade stderr, the three-dot diff). Reasoning
+  ahead of evidence was wrong every single time in this
+  incident.
+- **The sweep has no per-event suppression knob.** Pausing
+  individual candidates relocates the promotion; only an empty
+  candidate set suppresses it. Documented as a recipe, not a
+  thing to re-derive under pressure.
+- **One good ticket's one residual item produced four distinct
+  plumbing bugs.** The decomposition *decision* was right
+  throughout; the cost was entirely in mechanical lineage /
+  field-name / control-flow defects. That's the expected shape
+  of hardening an autonomous pipeline — the judgment was sound;
+  the wiring needed four passes.

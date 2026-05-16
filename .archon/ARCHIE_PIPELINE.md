@@ -435,6 +435,68 @@ console.log("labeled", keys.length);
 
 To unpause: same script with `remove` instead of `add`.
 
+### Force a ticket to Done WITHOUT triggering a sweep-promotion
+
+**When you need this:** a ticket must be transitioned to Done, but
+you do *not* want its Done event to promote the next Backlog ticket
+(e.g. the WIP=1 slot is already legitimately occupied by an
+in-flight run, or you're doing operational cleanup of a ticket whose
+work already shipped via another PR — the WOR-121/WOR-142 cascade
+post-mortem in the run journal is the worked example).
+
+**Why the obvious approaches don't work:** there is *no per-event
+knob* to make one Done skip the sweep. Only a *successful
+action-item cascade* skips it (`process.exit(0)` in
+`jira-task-done.ts`). And pausing the *next* sweep candidate does
+**not** suppress the promotion — the sweep JQL is `labels not in
+("archon-blocked-pending")`, so it just promotes the next *unpaused*
+ticket instead. The label relocates the promotion; it does not
+cancel it. The only way the sweep promotes nothing is if its
+candidate set is **empty**.
+
+**Recipe:**
+
+1. Do the slow, independent work first (close the PR, comment the
+   ticket, link artifacts) — no Backlog pause needed yet, so keep
+   the pause window short.
+2. **Snapshot** the set `S` = all `Backlog`, non-Epic tickets that
+   do **not** already have `archon-blocked-pending`. Persist `S` to
+   disk. Snapshot the *without-label* set specifically — never "all
+   Backlog" — so step 6 cannot strip a pre-existing legitimate
+   pause.
+
+   ```bash
+   bun -e '
+   const auth = Buffer.from(`${process.env.JIRA_USER_EMAIL}:${process.env.JIRA_API_TOKEN}`).toString("base64");
+   const jql = `project = WOR AND status = "Backlog" AND issuetype != Epic AND (labels is EMPTY OR labels not in ("archon-blocked-pending")) ORDER BY key ASC`;
+   const r = await fetch(`${process.env.JIRA_BASE_URL}/rest/api/3/search/jql?jql=${encodeURIComponent(jql)}&fields=labels&maxResults=200`, { headers: { Authorization: `Basic ${auth}`, Accept: "application/json" } });
+   const keys = (await r.json()).issues.map(i => i.key);
+   require("fs").writeFileSync("/tmp/unpause-set.json", JSON.stringify(keys));
+   console.log("snapshot:", keys.length, keys.join(","));
+   '
+   ```
+
+3. Add `archon-blocked-pending` to every ticket in `S` (loop
+   `jira-tool.js editLabels … add`).
+4. **Verify** the sweep JQL returns **zero** rows (same JQL as
+   step 2). Do not proceed otherwise.
+5. Transition the target ticket → Done (`jira-tool.js
+   transitionIssue … toStatus:"Done"`). Its Done fires
+   `jira-task-done`; the sweep finds nothing, promotes nothing.
+   Confirm `"tickets_promoted":[]` in the latest
+   `router-dispatch-logs/task-done.log`.
+6. Remove `archon-blocked-pending` from **exactly** the keys in
+   `/tmp/unpause-set.json` — not "all Backlog", or you'd clear
+   genuine pauses.
+7. Verify zero leftover pause labels (JQL `… AND labels in
+   ("archon-blocked-pending")` → 0 for the set you touched);
+   prior state restored.
+
+**Race window:** between steps 3–6 the whole Backlog is paused. If
+another Done fires in that window it also promotes nothing — that's
+acceptable; just manually promote the next ticket afterward. Don't
+over-engineer the window (operator's explicit call).
+
 ---
 
 ## Operational tips
