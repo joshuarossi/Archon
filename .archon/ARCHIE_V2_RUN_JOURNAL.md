@@ -4208,3 +4208,70 @@ preserving:
    fully self-instrumented by construction. Claude concurred:
    the on-demand exactness is the genuinely novel thing, beyond
    the build itself.
+
+---
+
+## Entry — 2026-05-16, 18:30 CDT — CLARITY BUILD COMPLETE — true final run numbers
+
+The Clarity autonomous build is **done**. Verified from the board
+(not assumed from Josh's message): zero non-terminal WOR tickets,
+WOR-136 Done, WOR-137 ("Landing page", the last ticket) Done, no
+active runs. WOR-137 landed as commit #53. The whole Clarity v1
+epic was built by the pipeline with the operator only ever fixing
+the *system*, never project code.
+
+### Final measured numbers (recomputed fresh at completion)
+
+| Metric | Final |
+|---|---|
+| Wall-clock elapsed | **~76.2 h** (first commit 2026-05-13 19:12:34 UTC → 2026-05-16 23:27 UTC) |
+| Total commits | 271 |
+| Total machine time | **58.1 h** (task-tests 25.2h, task-implement 23.9h, bug-pipeline 5.8h, epic-decompose 3.0h, router/done ~0.2h) |
+| Build-only machine time | 49.1 h (task-tests + task-implement) |
+| Total cost | **$541.09** (task-implement $300.88, task-tests $189.57, epic-decompose $44.51, bug-pipeline $6.13) |
+| Avg cost / ticket | **$11.27** (48 tickets with attributed cost) |
+
+Delta from the pre-completion snapshot ($536.65 / $11.42 /
+57.6h): the last two tickets added ~+0.5h machine time and
+~+$4.44, and *lowered* the per-ticket average ($11.42 → $11.27)
+because WOR-136/137 were comparatively clean finishes — directly
+consistent with the "matured pipeline → cheaper tickets"
+thesis.
+
+### What this run produced
+
+A real ~37-ticket production application: Convex schema + auth +
+state machine, AI mediation flows (joint chat with streaming,
+private/draft coaching, synthesis with privacy filter), full
+React/Vite app shell + theme + shared components, Cases/Invite
+modules, dashboard, closure flow, admin (templates + versioning
++ audit log), profile, abandoned-case cron, landing page — plus
+the entire pipeline-hardening gauntlet absorbed into the *system*
+(silent-SKIP, the followup-bug cascade's 4 bugs, the
+slot-exhaustion pattern, the unified red-state-validator class).
+Builds clean, typechecks 0 errors (verified with deps installed —
+see the prior evaluator-error entry).
+
+### Caveats kept attached (so the numbers stay defensible)
+
+- WIP=1 serialized the 58.1 h; it is parallelizable (Capacity
+  0/10) — not an irreducible duration.
+- ~$200+ and the bulk of bug-pipeline / reroll machine time is
+  one-time R&D tax (the tickets that taught us the pipeline's
+  own bug classes). Project #2 starts matured and skips it;
+  steady-state per-ticket is below the all-in $11.27.
+- Cost is a floor (summed from rollup-bearing runs; a missed
+  rollup under-counts, never over).
+- "Builds + typechecks" is the floor. The real quality verdict
+  is the conformance benchmark (ARCHIE_QUALITY_BENCHMARK.md) —
+  still to be run, calibrate-first, scored blind. Build complete
+  ≠ evaluation complete.
+
+### Next
+
+Evaluation phase per ARCHIE_QUALITY_BENCHMARK.md: reference-app
+selection (a decision for Josh, not unilateral), harness build,
+calibrate on known-good/known-bad, lock, then score Clarity
+blind. Plus the deferred Storybook feature-Epic experiment
+(standard PRD, full epic-decompose flow) and the Cloudflare
+Pages CI/CD step. None started — build done, evaluation not yet.
