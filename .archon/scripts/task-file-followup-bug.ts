@@ -91,7 +91,38 @@ async function callJiraTool(input: Record<string, unknown>): Promise<unknown> {
   return parsed.result;
 }
 
-// 1. Create the Bug ticket. (jira-tool.js field names: project, issuetype, descriptionMarkdown.)
+// Resolve the parent ticket's Epic so the bug ticket is born under the
+// same Epic. Without this the followup bug has no Epic parent and is
+// invisible in the epic board even though the Action-item link (which
+// the jira-task-done cascade keys off) is set correctly. The Epic
+// parent is for board visibility only; if the parent has no Epic we
+// proceed without one rather than fail — the link is load-bearing, the
+// Epic parent is not.
+let epicKey: string | undefined;
+try {
+  const parentIssue = (await callJiraTool({
+    action: 'getIssue',
+    issueKey: draft.parent_issue_key,
+    fields: ['parent'],
+  })) as { fields?: { parent?: { key?: string } } };
+  epicKey = parentIssue.fields?.parent?.key;
+  if (epicKey) {
+    console.error(`Parent ${draft.parent_issue_key} is under Epic ${epicKey}; new ticket will inherit it.`);
+  } else {
+    console.error(
+      `Parent ${draft.parent_issue_key} has no Epic parent — filing followup without an Epic (link still set).`,
+    );
+  }
+} catch (err) {
+  // Epic resolution is best-effort: a failure here must not block
+  // filing the bug. Worst case the ticket is epic-orphaned (visible
+  // via the Action-item link, just not on the board).
+  console.error(
+    `Could not resolve Epic for ${draft.parent_issue_key}: ${(err as Error).message}. Filing without Epic parent.`,
+  );
+}
+
+// 1. Create the Bug ticket. (jira-tool.js field names: project, issuetype, descriptionMarkdown, parentKey.)
 console.error(`Creating Bug ticket in ${projectKey}: ${draft.summary}`);
 const created = (await callJiraTool({
   action: 'createIssue',
@@ -99,6 +130,7 @@ const created = (await callJiraTool({
   issuetype: 'Bug',
   summary: draft.summary,
   descriptionMarkdown: draft.description_markdown,
+  ...(epicKey ? { parentKey: epicKey } : {}),
 })) as { issueKey: string };
 // jira-tool.js's runCreateIssue returns { ..., issueKey: <key> } — NOT
 // { key }. Reading `.key` here yields undefined, which then makes the
