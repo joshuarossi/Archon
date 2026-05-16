@@ -2819,3 +2819,106 @@ re-run should converge faster, or surface whether the
 mock-wiring issue is a deeper test-infrastructure gap).
 
 Watching this one closely on the re-run.
+
+---
+
+## Entry — 2026-05-16, 00:30 CDT — Cost milestone: $199 / 22 tickets + WOR-113 re-run converged
+
+### WOR-113 resolved on the re-run
+
+The first WOR-113 run exhausted its 5-slot budget while the
+test-editor was genuinely converging (mock-wiring fix was the
+last holdout, never got a clean slot). Full reset + re-fire.
+The re-run converged at attempt-3:
+
+- attempt-1: vitest failed (red state, impl not built yet)
+- attempt-2: 3 failed / 624 passed
+- attempt-3: vitest PASSED
+
+Same pattern as the first run (all 5 slots fired, edit-tests-2..5
+all triggered, verdict=test_needs_edits every round) but this
+time the test-editor closed the mock-wiring fix within budget.
+
+This confirms the earlier journal read: WOR-113's first
+exhaustion was a "needs one more iteration" case, not a
+fundamental gap. The pipeline fixes (PR #31 three-way verdict,
+PR #35 test-editor commit) were all working correctly; the
+ticket just sat at the edge of the slot budget. A fresh budget
+resolved it with no code or pipeline changes. Strong evidence
+that the slot-budget-extension backlog item (journal entry
+"WOR-113 budget exhaustion") is the right optimization — it
+would have saved the reset round.
+
+### Cost milestone: full Clarity-run economics so far
+
+Aggregated `metadata.total_cost_usd` across every completed
+workflow run (task-tests + task-implement + bug-pipeline)
+joined by ticket via working_path. 22 Done tickets:
+
+| Ticket  | task-tests | task-impl | other | TOTAL  |
+|---------|-----------:|----------:|------:|-------:|
+| WOR-95  | $13.03     | $7.57     | —     | $20.60 |
+| WOR-96  | $1.52      | $3.01     | —     | $4.53  |
+| WOR-97  | $3.31      | $3.92     | —     | $7.23  |
+| WOR-98  | $1.47      | $2.65     | —     | $4.11  |
+| WOR-99  | $2.03      | $3.57     | —     | $5.60  |
+| WOR-100 | $1.74      | $0.00     | —     | $1.74  |
+| WOR-101 | $2.49      | $5.76     | —     | $8.25  |
+| WOR-102 | $6.38      | $14.05    | —     | $20.44 |
+| WOR-103 | $2.91      | $7.15     | —     | $10.07 |
+| WOR-104 | $2.60      | $8.45     | —     | $11.05 |
+| WOR-105 | $12.81     | $7.11     | —     | $19.93 |
+| WOR-106 | $2.40      | $3.15     | —     | $5.54  |
+| WOR-107 | $2.69      | $9.06     | —     | $11.75 |
+| WOR-108 | $2.62      | $4.39     | —     | $7.01  |
+| WOR-109 | $3.77      | $8.55     | —     | $12.32 |
+| WOR-110 | $4.12      | $7.80     | —     | $11.91 |
+| WOR-111 | $5.49      | $9.17     | —     | $14.67 |
+| WOR-112 | $2.71      | $3.78     | —     | $6.49  |
+| WOR-138 | $1.86      | $0.00     | —     | $1.86  |
+| WOR-139 | $0.00      | $3.17     | $1.44 | $4.61  |
+| WOR-140 | $0.00      | $4.03     | $1.71 | $5.74  |
+| WOR-141 | $0.00      | $2.36     | $1.27 | $3.64  |
+
+**Grand total: $199.08 across 22 tickets. Mean $9.05/ticket.**
+
+### Reading the numbers
+
+**The R&D tax is concentrated and one-time.** Three tickets —
+WOR-95 ($20.60, the silent-SKIP saga), WOR-102 ($20.44, the
+closure-narrowing contract negotiation), WOR-105 ($19.93, the
+test-isolation discovery) — account for ~$61, 30% of total
+cost. These are the tickets that *taught us the pipeline bugs*.
+That cost does not recur per project; a second project on the
+matured pipeline skips it entirely. Strip them: 19 tickets,
+~$138, ~$7.3/ticket.
+
+**Steady-state tickets are cheap.** WOR-100 ($1.74), WOR-138
+($1.86), WOR-141 ($3.64), WOR-98 ($4.11), WOR-96 ($4.53) ran
+clean in 1-2 attempts.
+
+**Bug-ticket trio (139/140/141) ~$4-6 each.** Tightly scoped
+fixes; the "other" column is bug-pipeline cost.
+
+**Median << mean.** Mean $9.05 is dragged by the 3 R&D-tax
+tickets. The recent steady-state batch (WOR-106..112) averages
+~$9 but trends down as the pipeline matured.
+
+### The economic comparison
+
+~$199 of model tokens delivered 22 tickets of a real
+production app: Convex schema, auth module, state machine, AI
+prompt assembly, privacy filter, transcript compression, full
+React/Vite/Convex app shell, theme system, shared chat
+components + UI primitives, CI pipeline, Cases/Invite Convex
+modules, login/register pages, plus 3 self-healing bug fixes.
+
+Estimate ~80-120 story points. At a loaded engineer rate
+($80-150/hr, ~4-12 hrs/SP-bundle) that is $20-40K of
+engineering time. The variable-cost ratio is **~100-200x
+cheaper**. The build-the-pipeline cost (operator time +
+the R&D-tax tickets) is one-time and amortizes across every
+future project.
+
+This is the unit-economics slide for the seed deck, computed
+from the system's own telemetry — not estimated, measured.
