@@ -3966,3 +3966,94 @@ logged reroll events (WOR-95/102/104/105/107/113/114/126/129/132)
 and they match the strict set exactly — so the strict number is
 trustworthy for external use. Loose vs strict are reported together
 precisely so no single framing can overclaim.
+
+---
+
+## Entry — 2026-05-16, 16:15 CDT — Claude produced a confidently-wrong negative repo assessment from a stale node_modules; Josh diagnosed it from Claude's own output
+
+A clean, attributed account of a real evaluator-error, recorded
+because (a) the conventions require it, (b) it is itself the
+strongest argument for the calibrate-first independent harness, and
+(c) it is the third instance this session of the same verify-first
+failure and the pattern needs to be undeniable in the record.
+
+### What happened, in sequence, with attribution
+
+1. **Josh** asked, re the finished Clarity build: *"take a look at
+   the repo, what do you think of it?"*
+2. **Claude** surveyed structure (14 routes, 17 Convex modules, ~10K
+   LOC app, ~1,155 tests, clean `convex/lib/` domain layering) — that
+   part was accurate — then ran `bun run typecheck` / `bun run build`
+   **in a checkout whose `node_modules` Claude had never verified was
+   installed**.
+3. **Claude** asserted, first: "the application code itself appears
+   to typecheck — every failure is under tests/." This was stated
+   **before checking** and was wrong.
+4. **Josh** did not yet correct it; **Claude** then dug further and
+   escalated the wrong conclusion: reported "164 type errors, ~37 in
+   application code, `react-router-dom` MISSING, real defects in
+   `convex/cases.ts` (`Id<string>` not assignable, `IndexRange.eq`
+   misuse), app does not build, POC-grade, benchmark would cap ≤40."
+   Presented authoritatively, with a "this vindicates the harness"
+   narrative built on top of the false finding.
+5. **Josh:** *"hmmm it almost sounds like you didn't do npm
+   install."* — diagnosed the true root cause from Claude's own
+   output, faster than Claude did.
+6. **Claude** checked: `package.json` *did* declare every
+   "missing" dep; `node_modules/.package-lock.json` was dated May 14
+   09:22 vs `package-lock.json` May 16 04:49 — the installed tree was
+   ~2 days stale, predating ~15 tickets' dependency additions.
+7. **Josh:** *"or bun install probably"* — correct; Bun project.
+8. **Claude** ran the install, re-ran the gates: **`tsc --noEmit` =
+   0 errors (total, not just src), `bun run build` = clean,
+   ✓ built in 2.96s.** Every one of the 164 "errors" was the stale
+   `node_modules`. Zero were defects in Archie's code.
+
+### Attribution, stated plainly (no hedging)
+
+- The error was **Claude's**, twice in two consecutive responses:
+  once asserting typecheck status before checking, once drawing a
+  detailed negative quality verdict from an environment Claude never
+  set up.
+- The correct diagnosis was **Josh's**, derived from Claude's own
+  pasted output, before Claude found it.
+- This is the **third** instance this session of the same root
+  failure (prior: stale "WOR-122/119 still running"; asserting state
+  from in-context snapshots). The earlier two were stale *state*;
+  this one is the more damaging variant — a stale *environment*
+  producing a confidently-wrong *evaluation* of someone's work.
+
+### Why this is the strongest argument FOR the harness (honestly)
+
+Not the reason Claude first claimed (that the pipeline didn't
+produce junk — true, but Claude's own broken finding can't be cited
+as evidence of anything). The real lesson: **even a careful human-
+or-AI evaluator produced a confident, detailed, false-negative
+quality assessment purely from a setup mistake.** A defined
+"install deps → then gate" harness sequence removes exactly that
+class of evaluator error from the quality number. That is a genuine,
+self-critical argument for the calibrate-first independent harness,
+and the benchmark's very first step must be environment preparation
+with verification.
+
+### Corrective action
+
+Memory `feedback_verify_current_state_fresh.md` extended with the
+corollary: *set up the environment before evaluating it; a wall of
+module-resolution / type-assignability errors across many files is
+the signature of a stale/missing `node_modules`, treat "my
+environment is wrong" as the prior, verify it before concluding
+anything about the code.* `ARCHIE_QUALITY_BENCHMARK.md` step 1
+(harness build) must encode dep-install-then-verify as a hard
+precondition before any gate runs.
+
+### What is actually true about the repo (verified, deps installed)
+
+`tsc --noEmit`: **0 errors**. `bun run build`: **clean, 3s**, 399 kB
+/ 118 kB gzipped. 14 routes, 17 Convex modules, deliberate
+`convex/lib/` domain isolation. Feature-complete against the PRD
+surface. This is a genuinely strong autonomous-build result — but
+that conclusion stands on the *re-run with deps installed*, NOT on
+anything in Claude's first (wrong) assessment, and "builds +
+typechecks" is the floor, not proof the running app works (see the
+next evaluation step: does the deployed homepage actually function).
