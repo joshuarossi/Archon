@@ -4145,3 +4145,66 @@ to `task-implement`. This is the third confirmation that the
 "per-ticket gate wrongly rejects correct contract-driven red-state
 tests" class is real, recurring, and now (with the unified
 recognizer) closed as a *class* rather than per-shape.
+
+---
+
+## Entry — 2026-05-16, 18:20 CDT — Run economics (measured, full Clarity run) + the observability-is-the-marvel point
+
+Josh asked, in sequence, for four hard numbers. All computed live
+from the system's own telemetry (git + the run table /
+`metadata.total_cost_usd`), not estimated. Recording the figures
+and the meta-observation Josh flagged.
+
+### The measured numbers (full Clarity run, all ~47 tickets)
+
+- **Wall-clock elapsed:** ~76 h (first commit 2026-05-13 19:12:34
+  UTC → 2026-05-16 23:08 UTC; 266 commits).
+- **Total machine time:** **57.6 h** (sum of all 444 Clarity run
+  durations; 1 clock-anomaly run excluded). Of which 48.6 h is
+  actual build (task-tests 25.1 h + task-implement 23.5 h);
+  bug-pipeline 5.8 h; epic-decompose 3.0 h; router/done ~0.2 h.
+  Machine time is ~76% of wall-clock — the pipeline was grinding
+  most of the calendar window, ~18 h idle/blocked/human-in-loop.
+- **Total cost:** **$536.65** (task-implement $298.28, task-tests
+  $187.73, epic-decompose $44.51, bug-pipeline $6.13). Floor, not
+  ceiling — summed from the 105 rollup-bearing runs of 450; a
+  missed rollup would under-count, never over.
+- **Average cost / ticket:** **$11.42** ($536.65 / 47 tickets
+  with attributed cost).
+
+Caveats kept attached to the numbers so they stay defensible:
+WIP=1 serialized the 57.6 h (parallelizable — Capacity 0/10); the
+$536 / 76 h / 57.6 h all include the one-time R&D-tax
+(pipeline-hardening tickets WOR-95/102/105/132/136 + the
+followup-cascade + repeated validator-fix verification cycles).
+The earlier journaled $199 / 22-ticket / ~$9-mean snapshot is not
+contradicted — it was the WOR-95–117 slice; this is the full run
+including ~25 more tickets and all the hardening.
+
+### Josh's point: next run faster & cheaper; and the real marvel
+
+Josh: *"that means that the next one will be faster and cheaper
+probably… but still great work, the ease with which i can GET
+these numbers is a modern marvel."* Both correct and worth
+preserving:
+
+1. **Project #2 economics improve structurally, not by hope.**
+   The ~$200+ and the bulk of the reroll/bug-pipeline machine
+   time in this run are the *cost of discovering and fixing the
+   pipeline's own bug classes* (silent-SKIP, followup-cascade,
+   slot-exhaustion, the now-unified red-state-validator class).
+   That code is merged. Project #2 starts on the matured
+   pipeline and skips it — the steady-state per-ticket cost/time
+   is materially below the all-in $11.42 / blended figures.
+2. **The observability is itself the product property.** These
+   are not estimates or memory-reconstructions — they are exact
+   figures pulled from the system's own telemetry, any slice, in
+   seconds, on demand (cost by workflow, machine time by
+   workflow, reroll distribution, per-ticket attribution). A
+   normal eng org cannot answer "what did feature X cost in
+   dollars and machine-hours" without a data project; here it's
+   one query. For the seed deck this is not an operational
+   footnote — it is a differentiator: an autonomous SDLC that is
+   fully self-instrumented by construction. Claude concurred:
+   the on-demand exactness is the genuinely novel thing, beyond
+   the build itself.
