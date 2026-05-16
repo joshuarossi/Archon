@@ -31,7 +31,11 @@ Threshold semantics (calibrated, not asserted — see Calibration):
      whose technical controls a tool can check and produce evidence
      for: OWASP ASVS level, WCAG 2.2 AA, GDPR *technical* controls
      (encryption at rest, deletion/export, consent gating, no PII in
-     logs), SAST/CWE + dependency-CVE cleanliness, perf SLOs,
+     logs), **HIPAA Security Rule technical safeguards** (encryption
+     in transit + at rest, audit controls / access logging, automatic
+     logoff, unique user identification, integrity controls, no PHI
+     in logs — its own row, NOT folded into GDPR; the two overlap but
+     are not equal), SAST/CWE + dependency-CVE cleanliness, perf SLOs,
      independent AC verification. The 0–100 is a rollup of the Tier-1
      conformance matrix.
    - **Tier 2 — human-audited (named, out of automated scope).** SOC
@@ -46,6 +50,10 @@ Threshold semantics (calibrated, not asserted — see Calibration):
      or pen-test audit would examine"), explicitly deferring the
      attestation itself to human auditors when there is a business
      reason (customer requirement, raise).
+     SOC 2 / HIPAA note: HIPAA Security Rule's *administrative* and
+     *physical* safeguards (workforce training, BAAs, contingency
+     planning, facility access) are Tier 2 — only the *technical*
+     safeguards are machine-verifiable Tier 1.
    - **Process auditability is a deliberate Tier-2 asset.** A SOC 2
      audit of a product also examines the SDLC that produced it
      (change management, review, access control, deploy discipline).
@@ -55,6 +63,33 @@ Threshold semantics (calibrated, not asserted — see Calibration):
      The benchmark should call this out as an asset for a future
      Tier-2 audit — without the harness pretending to grant the
      attestation.
+
+## Marketing-claim discipline (the copy must inherit the two-tier split)
+
+The market wedge is real and differentiated: every vibe-coding tool
+competes on speed-to-demo; none competes on *"the autonomous pipeline
+produces apps that clear named compliance bars"* (SOC 2 Type II–
+auditable, HIPAA-compliant, GDPR-compliant, WCAG-accessible). That
+reframes the category from toy-velocity to regulated-industry-grade
+and addresses exactly the buyers (health, fintech, gov, enterprise)
+current tools cannot serve.
+
+But the claim is only a moat if it survives technical due diligence,
+so the copy MUST track what the harness actually proves:
+
+- **Defensible (use this):** "Archie produces apps that pass the
+  technical/engineering controls of SOC 2 Type II, the HIPAA Security
+  Rule, GDPR, and WCAG 2.2 AA — verified by an automated conformance
+  harness, with the SDLC itself auditable."
+- **Indefensible (never say this):** "Archie produces SOC 2 certified
+  / HIPAA certified apps." No tool certifies these; certification is
+  a human auditor's attestation. The overclaim is a DD landmine and
+  is unnecessary — the defensible version is already a
+  category-killer.
+
+The honest version still wins the pitch. Precision here is not
+timidity; it is what makes the claim bulletproof in the room where it
+matters.
 
 ## The five dimensions
 
@@ -79,6 +114,8 @@ automated scope" section (Tier 2). Example shape:
 OWASP ASVS L2          : CONFORMANT      (evidence/…)
 WCAG 2.2 AA            : CONFORMANT      (axe report)
 GDPR technical controls: CONFORMANT      (encryption/deletion/logs)
+HIPAA Security Rule    : CONFORMANT      (technical safeguards;
+  (technical safeguards)                  admin/physical = Tier 2)
 SAST / CVE             : CONFORMANT      (semgrep + npm audit)
 Resilience SLO         : PARTIAL         (2 endpoints over p95)
 Independent AC verify  : CONFORMANT      (fresh E2E, not Archie's tests)
