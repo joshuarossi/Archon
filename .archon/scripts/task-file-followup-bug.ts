@@ -99,8 +99,21 @@ const created = (await callJiraTool({
   issuetype: 'Bug',
   summary: draft.summary,
   descriptionMarkdown: draft.description_markdown,
-})) as { key: string };
-const newKey = created.key;
+})) as { issueKey: string };
+// jira-tool.js's runCreateIssue returns { ..., issueKey: <key> } — NOT
+// { key }. Reading `.key` here yields undefined, which then makes the
+// downstream createIssueLink / transitionIssue calls throw
+// assertIssueKey(undefined), get swallowed by their non-fatal
+// try/catch, and leave the bug ticket orphaned (created but unlinked,
+// stuck in Backlog). Must read `.issueKey`.
+const newKey = created.issueKey;
+if (!newKey) {
+  console.error(
+    `createIssue returned no issueKey (got: ${JSON.stringify(created)}). Cannot link or transition.`,
+  );
+  process.stdout.write(JSON.stringify({ filed: 'false', reason: 'no_issue_key_returned' }));
+  process.exit(0);
+}
 console.error(`Created ${newKey}.`);
 
 // 2. Link as Action item from the parent. jira-tool.js fields: linkType,
