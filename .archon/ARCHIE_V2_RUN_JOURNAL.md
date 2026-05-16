@@ -3530,3 +3530,110 @@ happened to be accurate; the defect was the *generic/passive
 phrasing* and the *implicit assumption that this direction is the
 norm*. The convention exists so future entries don't assume that
 direction — they report whichever direction actually occurred.
+
+---
+
+## Entry — 2026-05-16, 06:10 CDT — WOR-126: dev loop over-built a non-contract UX element, couldn't self-correct in 6 attempts → reroll as data point
+
+First entry written under the new conventions (append-only; full
+reasoning trajectory incl. alternatives + why-rejected; symmetric
+attribution). This is logged as a **data point**, not a closed
+book — the pattern it represents needs more thought later (see §5).
+
+### 1. The incident — what happened, found from artifacts
+
+WOR-126 ("JointChatView page — shared conversation with Coach",
+Story) failed to reach PR. Claude investigated from artifacts (not
+from logs/memory): the `task-implement` DAG terminated at
+`fail-implementation-not-ready` after **6 dev-loop attempts**.
+
+- Final-failed run: `fe009d14a176388947483918ecdeb484`
+  (dispatch run `eefe45704ea5c085c7d92ef6024ab84a`).
+- Gates at the end: lint **pass**, typecheck **pass**, vitest
+  **fail** (`3 failed | 1005 passed (1008)`), playwright skipped.
+  The code was ~99.7% there.
+- Root cause, precisely identified by the final reviewer
+  (`dev-review-final.json`, an unusually high-quality verdict):
+  `ChatWindow.tsx` rendered a **non-contract UX flourish** — an
+  "Auto-scroll re-engaged" indicator `<div>` (lines 76–87, plus
+  `showReEngaged` state + a timer `useEffect`). A test fixture
+  independently creates a *message bubble* whose content is the
+  identical string `"Auto-scroll re-engaged"`. So
+  `screen.getByText(/Auto-scroll re-engaged/)` matched **two**
+  DOM nodes → `getMultipleElementsFoundError` → 3 tests fail.
+- The reviewer correctly judged: the indicator is required by
+  **no acceptance criterion**; the actual auto-scroll behavior
+  (`isAtBottomRef` + `useEffect`) is correct and
+  contract-compliant; the fix is to **delete** the speculative
+  indicator (~15 lines, purely subtractive). It even supplied
+  `exact_solution` + `example_code`.
+
+Why it never converged: the fix is **production-code deletion**.
+The cage-bound test-editor cannot touch `src/`, and the dev agent
+burned its 6 attempts without removing the element it had itself
+added. Classic gold-plating-then-can't-let-go.
+
+### 2. Diagnosis
+
+The dev loop **over-built beyond the contract** (added an
+unrequested visible indicator), that speculative element collided
+with a fixture string, and the loop exhausted its slot budget
+before converging. Not a flaky/infra failure — a clean,
+fully-understood, *self-inflicted* one.
+
+### 3. Options Claude presented, and the reasoning
+
+- **A — straight reroll** (reset + stateless rerun). Pros: zero
+  new variables, established retry primitive (WOR-114 A/B proved
+  fresh context can converge where a poisoned run plateaued),
+  high-quality final verdict + good test-gen carry into the fresh
+  run, keeps "system fixes itself" integrity. Cons: ~$11/30min,
+  probabilistic, and the dev agent has a demonstrated bias to
+  *add* speculative code and not *delete* it — a reroll might
+  over-build differently.
+- **B — autonomous followup-bug**. Rejected: that pattern requires
+  a ticket that *reached PR* with a residual; WOR-126 never
+  reached PR, there is no parent PR to cascade. Not viable.
+- **C — reroll + ship a Mode-2 anti-gold-plating fix together**.
+  Rejected for *now*: bundles two variables into one experiment,
+  violating single-variable discipline. The pattern is real (see
+  §5) but the fix must come *after* the reroll data point.
+- **D — manual fix**. Rejected: Clarity code is
+  operator-untouchable; the whole experiment is invalidated if we
+  hand-fix the project. Listed only for completeness.
+
+### 4. Decision (Josh + Claude agreed)
+
+Claude recommended **A — straight reroll, nothing bundled**, plus
+log the over-build pattern as a tracked data point for later
+Mode-2 thinking. Josh: *"yes, i agree with your assessment, we
+should reroll, we should save notes about this incident, we
+should view it as a data point, and we need to think about this
+further later."* Both aligned; no disagreement to attribute on
+this one. Reroll executed via the ARCHIE_PIPELINE.md reset recipe
+(close PR if any → delete branch → remove worktree → abandon
+non-terminal DB rows → verify clean → transition Jira **last**).
+
+### 5. The thing to think about later (explicitly deferred, not solved)
+
+This is the **second** instance of "dev agent renders a
+user-visible element whose text collides with a test fixture":
+WOR-121 was a text-collision in a redirect/heading; WOR-126 is
+the "Auto-scroll re-engaged" indicator. The shared root is **the
+dev loop adding user-visible UI not traceable to any AC**, then
+that surplus breaking tests. Candidate Mode-2 hardenings to weigh
+*after* we have WOR-126's reroll outcome:
+
+- scope-reviewer (or dev prompt) explicitly flags "you added a
+  user-visible element with no AC traceability — justify or
+  remove."
+- a contract-traceability gate: every rendered text string the
+  tests query should map to an AC/contract line.
+- treat reroll outcome as the experiment: **converges** ⇒
+  reroll-as-primitive holds, gold-plating is noise; **fails the
+  same way** ⇒ strong evidence the dev loop has a *systematic*
+  gold-plating bias a reroll won't fix, and the Mode-2 change
+  becomes load-bearing, not optional.
+
+Deliberately NOT acting on §5 now. It is recorded so the next
+session has the pattern and the decision criterion in hand.
