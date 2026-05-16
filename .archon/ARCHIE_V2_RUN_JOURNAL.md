@@ -4275,3 +4275,83 @@ calibrate on known-good/known-bad, lock, then score Clarity
 blind. Plus the deferred Storybook feature-Epic experiment
 (standard PRD, full epic-decompose flow) and the Cloudflare
 Pages CI/CD step. None started — build done, evaluation not yet.
+
+---
+
+## Entry — 2026-05-16, 18:50 CDT — Clarity evaluation results + full codebase statistics
+
+First real quality read of the completed app, plus the quantitative
+profile of the run. All measured directly (deps installed first —
+the stale-node_modules false-negative did NOT recur; Step 0 of any
+eval is now `bun install` + verify).
+
+### Evaluation (verified, properly run)
+
+| Check | Result |
+|---|---|
+| Build (`tsc -b && vite build`) | PASS — 1931 modules, 2.83s, 403 kB / 119 kB gz |
+| ESLint (`eslint .`) | PASS — zero errors/warnings |
+| Unit tests (vitest) | **1233 / 1233 passing**, zero failures |
+| Coverage | **80.88% stmt / 82.73% branch / 80.72% func / 80.88% line** |
+
+Coverage split (the honest detail): `convex/lib` (domain logic —
+state machine, privacy filter, prompts) **98.89%**; `convex`
+backend 81.5%; `src/lib`/`src/hooks`/`src/components/ui`/`src/styles`
+**100%**; `src/routes` 83.4%; **top-level `src` (main.tsx +
+App.tsx, the bootstrap/router wiring) 0%** — not unit-tested,
+relies on e2e. The 81% is real and strong; it excludes the
+app-wiring layer by design.
+
+Two config findings (NOT failures — hygiene, worth recording):
+1. `vitest.config.ts` has no `exclude` for `e2e/` → bare `vitest`
+   scoops the 20 Playwright specs and reports them as "failed
+   files". Tests are 1233/1233; the suite only *looks* broken when
+   run naively. A real reviewer / the conformance benchmark would
+   flag this.
+2. `src/main.tsx` + `src/App.tsx` have 0 unit coverage — the
+   user-facing entry/route wiring is exercised only by the
+   (separate, not-yet-run) e2e suite.
+
+### Codebase statistics (measured)
+
+Application surface: **16 routes**, **15 page components**, **19
+components** (ui 5 / chat 6 / joint 2 / layout 6), 1 hook, **14
+Convex modules + 8 `convex/lib`**.
+
+| LOC | |
+|---|---|
+| App code (`src/`, non-test) | 5,646 |
+| Convex backend (excl `_generated`) | 4,539 |
+| Styles (CSS) | 877 |
+| **Total production code** | **~11,062** |
+| Unit tests | 23,536 |
+| E2E tests | 4,706 |
+| **Total test code** | **28,242** |
+
+**Test-to-code ratio ≈ 2.55:1** — the pipeline writes ~2.5× more
+test LOC than production LOC (consequence of test-gen-first,
+AC-enforcing architecture; most human codebases are well below
+1:1).
+
+Files: 62 production source files, 64 unit-test files, 20 e2e
+specs. Tests: 1,033 statically-counted unit `it/test` blocks →
+**1,233 executed** (the gap is `it.each`/`test.each` expansion at
+runtime; both numbers correct for what they measure), 147 e2e.
+
+Git: **271 commits**. Authorship split — **Debian (the autonomous
+agent): 216 commits (~80%)**; Josh Rossi: 54; Josh: 1. The ~55
+human commits are operator git-plumbing on agent output + *system*
+fixes — never project-code authorship. That split is itself a
+headline statistic: ~80% of the commit history is autonomous.
+
+### Honest framing
+
+Builds clean, lints clean, 1233/1233 unit tests pass, ~81%
+coverage with core domain logic ~99% — a genuinely solid result,
+better than many human-written codebases on the
+lint/typecheck/coverage axes. The caveats (bootstrap layer
+untested, vitest/e2e config split) are hygiene findings, not
+defects — and exactly the class of thing the formal conformance
+benchmark is designed to catch and *quantify* rather than rely on
+eyeballing. Build + this eval are the floor; the benchmark
+(calibrate-first, scored blind) is still the real verdict.
