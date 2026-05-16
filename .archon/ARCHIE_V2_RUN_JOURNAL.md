@@ -3469,3 +3469,64 @@ longer holds and the catch must fail loud instead.
   field-name / control-flow defects. That's the expected shape
   of hardening an autonomous pipeline — the judgment was sound;
   the wiring needed four passes.
+
+---
+
+## Entry — 2026-05-16, 03:30 CDT — ADDENDUM to the WOR-121→WOR-142 post-mortem: attribution convention
+
+This is an **addendum**, not an edit. The post-mortem entry above
+is left exactly as merged — including its muddled attribution —
+because the journal is an immutable historic record: the way it
+was written *is* part of the record. This note sits below it so a
+reader sees the entry, then the correction, and learns both the
+substantive incident and the meta-lesson about attribution.
+
+**The problem with the entry above.** It uses generic "the
+operator …" and passive voice throughout, and where it does
+attribute, it bakes in an asymmetry: wrong conclusions are tagged
+as Claude's, corrections as Josh's pushback. That framing is
+flattering, not honest. Example phrasings from the entry —
+"*operator killed it in one line*", "*operator's call*", "*my
+first wrong theory*" — consistently position Claude as the source
+of error and Josh as the source of correction.
+
+**Josh's correction (near-verbatim).** Josh: *"whoever produced
+the reasoning step gets attribution, and the corrections get
+attributed to whoever produced them. The convention isn't 'Josh
+is always right, Claude is sometimes wrong.' Symmetry matters
+because the journal's value comes from honest cognitive
+accounting, not from making either party look good."*
+
+**The convention, going forward (direction-agnostic):**
+
+- **Josh:** what Josh said / decided / directed / reasoned —
+  *including theories of his that turn out wrong*. Near-verbatim
+  for load-bearing calls.
+- **Claude / I:** what I did / concluded / got wrong — including
+  my wrong conclusions.
+- **Corrections** attributed to whoever produced the correction,
+  regardless of who erred. If Josh advances a theory that's wrong
+  and Claude's analysis corrects it, the record says exactly
+  that — symmetric with the reverse.
+- No generic "the operator", no who-did-what-blurring passive
+  voice.
+
+**Why the symmetry is load-bearing, not cosmetic.** A journal
+that only ever shows Claude erring and Josh correcting is not a
+neutral record — it is a biased one, and its analytic value
+degrades accordingly. The point of the cognitive accounting is to
+see *where reasoning actually breaks and who actually catches
+it*, in both directions, so the failure modes are real signal.
+Honest accounting > making either party look good. (Recorded as
+durable cross-session guidance in auto-memory
+`feedback_journal_explicit_attribution.md`.)
+
+**On the post-mortem above, for the record:** applying the
+symmetric convention retroactively in spirit (without editing the
+immutable entry) — across that incident the wrong intermediate
+theories were Claude's and Josh's pushback was the corrective
+each time, so the entry's *substance* of who-erred-who-corrected
+happened to be accurate; the defect was the *generic/passive
+phrasing* and the *implicit assumption that this direction is the
+norm*. The convention exists so future entries don't assume that
+direction — they report whichever direction actually occurred.
