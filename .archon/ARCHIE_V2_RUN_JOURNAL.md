@@ -4057,3 +4057,91 @@ that conclusion stands on the *re-run with deps installed*, NOT on
 anything in Claude's first (wrong) assessment, and "builds +
 typechecks" is the floor, not proof the running app works (see the
 next evaluation step: does the deployed homepage actually function).
+
+---
+
+## Entry — 2026-05-16, 17:45 CDT — WOR-136: third instance of the red-state validator class → unified general fix (PR #51), verify-live-first reset
+
+### The incident
+
+WOR-136 ("Abandoned case cron job — convex/crons.ts") failed
+`task-tests` at `verify-tests-exist`. Claude investigated from the
+artifact (run `a4dd949d…`): 12 unexpected `TS2345` errors —
+`Argument of type '"notifications"' / '"by_user"' / '"userId"' is
+not assignable`. Checked the contract before judging: it explicitly
+promises *"schema — adds notifications table and by_status index"*
+and *"inserts notification records for both parties"*. The current
+`convex/schema.ts` has no `notifications` table. So the generated
+test correctly references a contract-promised-but-not-yet-built
+schema symbol at red state → the tests are CORRECT; the validator's
+classifier had no model for this shape. Same root *class* as WOR-132,
+different TS code (`TS2345` schema-literal vs `TS2339` api-namespace
+vs `TS2307` import).
+
+### The decision (Josh)
+
+Claude presented three options (point-fix the TS2345 shape /
+general fix all contract-promised-not-yet-built shapes / refire-and-
+observe). Josh chose the **general fix**: *"Fix validator generally
+for ALL red-state schema/api shapes."* Rationale Josh implied and
+Claude concurred: three instances of one root class
+(WOR-95/132/136) is enough evidence that point-patching each TS code
+is whack-a-mole; unify on the contract-keyed principle so a 4th
+variant extends the family instead of needing another patch.
+
+### The fix (PR #51, merged by Josh)
+
+Unified `isExpectedRedStateError` around the principle: *an error is
+expected red-state iff caused by the test correctly referencing a
+contract-promised-but-not-yet-built symbol; the TS code merely
+varies by reference style.* Shapes A (TS2307 import) and B (TS2339
+api-namespace, PR #50) unchanged. Added Shape C
+(`isExpectedRedStateContractSymbol`): TS2345/2820/2769 on a string
+literal, accepted ONLY when (1) the contract modifies a Convex
+schema file AND (2) the literal appears verbatim as a standalone
+token in the contract text. Verified: real WOR-136 artifact 12
+unexpected → 0, passed=true; two-file negative test proved a
+contract-promised `"notifications"` is EXPECTED while a typo
+`"notificaitons"` (not in contract) stays UNEXPECTED — typo
+detection preserved.
+
+### Process: verify-live BEFORE refire (Josh's ordering correction)
+
+Claude's initial step list had "verify the fix is live in the
+running pipeline" as item #2. Josh: *"that really means that #2
+should be #1 in your list… first verify the fix is live, then reset
+and refire 136, then journal it."* Correct and load-bearing: a
+refire against a pipeline still running the old validator (stale
+bundled/cached copy) just burns the run hitting the identical wall
+— the exact failure this whole investigation is about. Verify-live
+*gates* the refire; it is a precondition, not a parallel check.
+
+Step 1 executed and PASSED: the pipeline invokes the script by
+absolute path (`bun /…/.archon/scripts/test-gen-validate.ts`, not a
+bundled copy); explicit `diff` confirmed the on-disk file ==
+origin/main byte-for-byte; `bundled-defaults.generated.ts` contains
+only the YAML's text path-reference, zero embedded script-body
+functions. Fix confirmed live, so the refire could proceed.
+
+Sub-note (own-error, recorded for honesty): during the reset, a
+remote-branch-existence check produced a contradiction ("git push
+--delete: ref does not exist" vs a refspec `ls-remote`: "STILL
+EXISTS"). Claude **stopped rather than proceed on the
+contradiction**, then resolved it with two independent authoritative
+checks (clean `ls-remote | grep` and `gh api matching-refs`, both
+empty) → branch genuinely gone; the "STILL EXISTS" was a false
+positive from Claude's own refspec-argument check construction. The
+discipline (don't act through an unresolved contradiction; verify
+with independent methods) worked — but the wasted churn is a
+reminder to use the clean check first.
+
+### Outcome
+
+Full runbook reset (branch/worktree/DB cleanup, Jira transition
+LAST), WOR-136 → Backlog → Selected for Development, `task-tests`
+re-running against the verified-live fixed validator. Expectation:
+clears `verify-tests-exist` (tests were always correct) and proceeds
+to `task-implement`. This is the third confirmation that the
+"per-ticket gate wrongly rejects correct contract-driven red-state
+tests" class is real, recurring, and now (with the unified
+recognizer) closed as a *class* rather than per-shape.
