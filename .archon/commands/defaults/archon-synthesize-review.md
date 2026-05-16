@@ -33,10 +33,14 @@ cat $ARTIFACTS_DIR/review/scope.md
 ### 1.3 Read All Agent Artifacts
 
 ```bash
-# Read each agent's findings
+# Read each agent's findings. The Archie reviewer fleet is:
+# scope, code-review, error-handling, docs-impact, comment-quality.
+# (There is no separate post-PR test-coverage agent — test
+# sufficiency is enforced upstream by the test-gen → test-review
+# cycle before implementation.)
+cat $ARTIFACTS_DIR/review/scope-findings.md
 cat $ARTIFACTS_DIR/review/code-review-findings.md
 cat $ARTIFACTS_DIR/review/error-handling-findings.md
-cat $ARTIFACTS_DIR/review/test-coverage-findings.md
 cat $ARTIFACTS_DIR/review/comment-quality-findings.md
 cat $ARTIFACTS_DIR/review/docs-impact-findings.md
 ```
@@ -83,9 +87,9 @@ Total findings: {n}
 - LOW: {n}
 
 By agent:
+- scope: {n} findings
 - code-review: {n} findings
 - error-handling: {n} findings
-- test-coverage: {n} findings
 - comment-quality: {n} findings
 - docs-impact: {n} findings
 ```
@@ -106,7 +110,7 @@ Write to `$ARTIFACTS_DIR/review/consolidated-review.md`:
 # Consolidated Review: PR #{number}
 
 **Date**: {ISO timestamp}
-**Agents**: code-review, error-handling, test-coverage, comment-quality, docs-impact
+**Agents**: scope, code-review, error-handling, comment-quality, docs-impact
 **Total Findings**: {count}
 
 ---
@@ -126,9 +130,9 @@ Write to `$ARTIFACTS_DIR/review/consolidated-review.md`:
 
 | Agent | CRITICAL | HIGH | MEDIUM | LOW | Total |
 |-------|----------|------|--------|-----|-------|
+| Scope | {n} | {n} | {n} | {n} | {n} |
 | Code Review | {n} | {n} | {n} | {n} | {n} |
 | Error Handling | {n} | {n} | {n} | {n} | {n} |
-| Test Coverage | {n} | {n} | {n} | {n} | {n} |
 | Comment Quality | {n} | {n} | {n} | {n} | {n} |
 | Docs Impact | {n} | {n} | {n} | {n} | {n} |
 | **Total** | **{n}** | **{n}** | **{n}** | **{n}** | **{n}** |
@@ -234,9 +238,9 @@ If not addressing in this PR, create issues for:
 
 | Agent | Artifact | Findings |
 |-------|----------|----------|
+| Scope | `scope-findings.md` | {n} |
 | Code Review | `code-review-findings.md` | {n} |
 | Error Handling | `error-handling-findings.md` | {n} |
-| Test Coverage | `test-coverage-findings.md` | {n} |
 | Comment Quality | `comment-quality-findings.md` | {n} |
 | Docs Impact | `docs-impact-findings.md` | {n} |
 
