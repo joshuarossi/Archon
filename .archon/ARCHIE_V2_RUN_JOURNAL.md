@@ -2922,3 +2922,213 @@ future project.
 
 This is the unit-economics slide for the seed deck, computed
 from the system's own telemetry — not estimated, measured.
+## Entry — 2026-05-16, 01:25 CDT — Design principle: single-responsibility agents with concrete reference standards
+
+### The observation
+
+The dev-loop reviewer (`archon-review-dev-attempt.md`, 165 lines)
+produces consistently surgical reviews. Examples from this run:
+
+- WOR-102: identified the closure-narrowing as a contract-vs-impl
+  mismatch, named the exact line, named the regression commit by SHA
+- WOR-113: "Production handleSubmit is correct... the 3 remaining
+  vitest failures are test-side: the mutation mock does not return
+  a resolved promise" — exact root cause + example fix code
+- WOR-104: caught the disabled-state ambiguity and routed it
+  correctly across iterations
+
+These are not "looks good / needs work" reviews. They are precise,
+actionable, and correctly classify test-side vs. impl-side.
+
+### The hypothesis (operator)
+
+The review quality is high *because* the prompt is small and
+tightly scoped, combined with the high-signal artifacts it reads.
+There is nothing to distract it from doing one job extremely well.
+
+### Why this holds — the mechanism
+
+Four properties of the dev-loop reviewer:
+
+1. **Single responsibility.** One question: "given this dev
+   attempt + the contract + the validator output, is the
+   implementation correct, and if not, what precisely is wrong,
+   and is it test-side or impl-side?" No "also check docs, also
+   assess scope, also evaluate comments." The post-PR fleet
+   *splits* those into 5 specialized agents precisely because
+   cramming them into one prompt degrades each.
+
+2. **High-signal artifacts, no spelunking.** It reads the
+   contract (the spec), the validator's deterministic output
+   (ground truth — what actually failed), and the diff. It does
+   not discover requirements or run anything. The contract IS the
+   requirements; the validator output IS the test result. The
+   reviewer adjudicates between them — a tractable, bounded
+   reasoning task.
+
+3. **Fresh context per invocation.** Each of the 5 slot-reviews
+   is a clean context. No accumulated cruft from prior attempts
+   polluting judgment.
+
+4. **Concrete reference standard.** Not "is this good code in
+   your opinion" but "does this match the contract." A checkable
+   standard turns subjective judgment into adjudication. This is
+   why the reviewer can be decisive instead of hedging.
+
+### The corroborating negative evidence
+
+The biggest, fuzziest-behaving prompt in the pipeline is the
+synthesizer (`archon-synthesize-review.md`, 401 lines) — and it's
+the one that had drift bugs (expecting a test-coverage reviewer
+that doesn't exist; dropping scope findings) and the
+NEEDS_DISCUSSION-orphan ambiguity. More scope, more lines, less
+crisp. Consistent with the hypothesis.
+
+And: nearly every failure this run was NOT in a small
+single-purpose agent. The agents did their jobs well. The bugs
+were in the *plumbing* — workflow routing (silent SKIP, enum
+orphan), commit conventions (test-editor not committing),
+validator attribution (vitest blocking scope), prompt/workflow
+drift (synth reviewer set). The meta-programming framing again:
+the agents are reliable functions; the bugs are in the control
+flow connecting them.
+
+### The design principle (for the clean-room rebuild)
+
+**Every agent does one atomic job against high-signal inputs with
+a concrete reference standard. Resist the temptation to make any
+agent do two things.**
+
+Every time you want to add "also check X" to a prompt, that is a
+signal X should be a separate node with its own fresh context.
+The cost is more nodes (more orchestration surface) — but the
+orchestration is the part that can be made typed and testable
+(the mirror). Agent quality is the part that cannot be easily
+debugged, so keep each agent's job small enough that it does not
+need debugging.
+
+Corollary for the rebuild: this should be enforced
+**structurally**, not by convention. The current pipeline relies
+on prompt authors choosing to keep agents narrow. The rebuilt
+orchestration system should make "one agent, one job, one
+reference standard, fresh context" the path of least resistance —
+e.g. a node type that takes (inputs, reference-artifact,
+single-question) and refuses multi-purpose prompts. Where the
+post-PR fleet split one reviewer into five specialists by hand,
+the system should make that split the default shape.
+
+The whole architecture, restated: test-gen writes tests against
+the contract; dev-attempt writes code against the contract;
+review-dev-attempt adjudicates code-vs-contract using validator
+ground truth; the synthesizer only consolidates. Each step is one
+job, one standard, one fresh context. The quality follows from
+the structure, not from any single clever prompt.
+## Entry — 2026-05-16, 02:20 CDT — WOR-114: stateless reroll converged where the stuck run plateaued
+
+### The two runs, side by side
+
+WOR-114 (Post-create invite sharing page). Same ticket, same
+contract, same code challenge. Two runs, opposite outcomes:
+
+**Run 1 (failed, halted In Progress):**
+- 6 tests in `invite-sharing-page.test.tsx` failed, all hard
+  5000ms timeouts, with a recurring jsdom
+  `HTMLCanvasElement.prototype.getContext` not-implemented error
+  from axe-core.
+- The dev-loop reviewer diagnosed it as **code-side**: "the copy
+  handler is async, make it fully synchronous, no async/await,
+  setCopiedKey on the same tick as the click."
+- That diagnosis was **wrong**. The dev followed it (commits
+  `869379b` make-synchronous, `8e85c47` try/catch), it didn't
+  resolve the timeouts, the reviewer kept refining the same
+  wrong code-side framing.
+- Failure-count trend across attempts 3/4/5: **6 / 6 / 6** —
+  dead flat. No convergence. The reviewer was anchored on a
+  wrong root cause and the dev couldn't fix a test-infra
+  timeout by editing a production handler.
+- Exhausted 5 slots, halted.
+
+**Run 2 (reroll, converged, merged):**
+- Full runbook reset (branch/worktree/DB cleaned, ticket
+  re-fired). **No memory of run 1** — fresh test-gen, fresh
+  reviewer, clean context.
+- Failure-count trend across attempts: **21 → 6 → 2 → 0**.
+  Monotonic descent. Converged at attempt-5, merged via the
+  normal synthesize → parse-synthesis → merge-pr tail.
+- One reroll. Got through on the second try.
+
+### Why this matters
+
+The operator's working theory, now supported by a clean A/B:
+
+> Convergence within 5 slots is probabilistic. Some tickets land
+> first try, some need a reroll, some need 2-3. The cost of a
+> reroll (~$11, ~30 min) is just part of the cost of automation.
+> A stateless reroll is a legitimate retry primitive, not a
+> workaround for a broken pipeline.
+
+Run 1 vs Run 2 is the proof. Nothing about the pipeline changed
+between them. The only difference was a fresh roll of the dice:
+
+- Run 1's reviewer anchored on a wrong code-side diagnosis and
+  never escaped it (5 slots, flat 6 failures).
+- Run 2's reviewer (cold start, no baggage) found a path that
+  converged (21 → 0).
+
+This is *why* statelessness is a feature, not a limitation.
+Earlier I treated "reset means no memory of the prior attempt"
+as a downside. It's the opposite. A stateful resume would carry
+forward run 1's poisoned context — the reviewer's wrong
+diagnosis, the dev's dead-end commits. The stateless reroll
+discards all of it and re-samples the convergence distribution
+from scratch. Sometimes the fresh sample is the one that works.
+
+### What this does NOT argue
+
+It does not argue the tracked bugs are unimportant. Two stand:
+
+1. **Reviewer misdiagnosis heuristic.** When many tests in one
+   file all fail with hard `Test timed out` (not assertion
+   failures), especially alongside jsdom/canvas/fake-timer
+   environment errors, the failure is almost certainly
+   test-infrastructure, not production code. The reviewer should
+   classify `test_needs_edits` and stop sending the dev at
+   production handlers. Run 1 burned 5 slots precisely because
+   the reviewer lacked this heuristic. Shipping it would shift
+   the convergence distribution toward first-try success
+   (fewer rerolls = lower expected cost).
+
+2. **dev-attempt / fix-after-validate co-fire waste.** Their
+   `when:` is `validate.passed == 'false' || verdict ==
+   'reject'`. On a `test_needs_edits` verdict, `edit-tests-N`
+   fires correctly — but `dev-attempt-N` ALSO fires because
+   `validate.passed == 'false'` is always true on a test-side
+   failure (failing tests are *why* we're in test-edit mode).
+   The dev correctly no-ops ("no production changes needed,
+   nothing to commit") but burns ~$1-3 and a slot every
+   test-side round. Fix: gate dev-attempt/fix-after-validate on
+   `verdict == 'reject'` only; the three-way verdict is the
+   authoritative router and `validate.passed` is redundant
+   once it's trusted (parse-dev-review fails closed to reject).
+
+Both are **optimizations that lower expected cost**, not
+**correctness blockers**. The system recovers economically on
+its own via reroll; these fixes just make it need fewer
+rerolls. They will be shipped one at a time, after the current
+run's data is in, never bundled — single variable per
+experiment.
+
+### Reroll tally so far (this run, WOR-95..115)
+
+- 17 tickets landed first-try (clean, 0 rerolls)
+- 7 needed >=1 reroll; ~15 of those rerolls concentrated in the
+  3 R&D-tax tickets (WOR-95/105/107 — debugged the pipeline
+  while they ran)
+- Steady-state hard tickets (WOR-102/104/113/114): 1-2 rerolls
+  each, all eventually converged
+- Zero permanent failures. Zero operator code-edits on Clarity.
+
+The distribution holds: most land first try, the occasional
+hard one takes a reroll or two, the expected cost is still
+~100x cheaper than the engineering equivalent even counting
+rerolls.
