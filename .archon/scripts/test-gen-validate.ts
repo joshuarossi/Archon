@@ -178,6 +178,18 @@ async function readContractPaths(): Promise<string[]> {
   return paths;
 }
 
+/**
+ * Raw contract.md text. Used by the contract-symbol red-state shape
+ * (Shape C) to confirm that a string-literal a test references (a
+ * Convex table / index / field name) is actually *promised* by the
+ * contract — not hallucinated. Returns '' if no contract is present.
+ */
+async function readContractText(): Promise<string> {
+  const path = `${artifactsDir}/contract.md`;
+  if (!existsSync(path)) return '';
+  return readFile(path, 'utf8');
+}
+
 // ─── Typecheck parsing ─────────────────────────────────────────────────
 
 interface TscError {
@@ -222,33 +234,46 @@ function parseTscOutput(stdout: string): TscError[] {
  * Classify a tsc error as expected (red-state, ok) or unexpected
  * (real defect, hard fail).
  *
- * Expected (two shapes):
+ * UNIFYING PRINCIPLE: an error is "expected red-state" iff it is
+ * caused by the test correctly referencing something the *contract
+ * promises task-implement will create*, which does not exist yet at
+ * red state. The same root cause manifests as different TS error
+ * codes depending on HOW the not-yet-existing thing is referenced.
+ * Three observed shapes (WOR-95 / WOR-132 / WOR-136 — see journal):
  *
- *   A. TS2307 "Cannot find module 'X'" where X resolves to a
- *      contract-promised path. This is the *direct-import* shape:
- *      a test does `import { x } from "../../convex/admin/templates"`
- *      and that file does not exist yet at red state.
+ *   A. TS2307 "Cannot find module 'X'" — *direct import* of a
+ *      contract-promised file path that doesn't exist yet.
  *
- *   B. TS2339 "Property 'P' does not exist on type ..." where P is a
- *      directory/file segment directly under a Convex `convex/` root
- *      that the contract promises to create. This is the *Convex
- *      api-object* shape: Convex tests never import functions
- *      directly — they access them as properties on the single
- *      generated `api` object (`api.admin.templates.listAll`). At red
- *      state the regenerated `api` has no `admin` namespace yet
- *      (because `convex/admin/` doesn't exist), so tsc emits TS2339
- *      on the FIRST missing segment (`admin`). A correct Convex
- *      red-state test referencing contract-promised-but-not-yet-built
- *      functions produces TS2339, never TS2307 — the classifier must
- *      model both or it wrongly rejects correct tests (see WOR-132
- *      run journal entry).
+ *   B. TS2339 "Property 'P' does not exist on type ..." — *Convex
+ *      api-object* access (`api.admin.templates.listAll`): the
+ *      generated `api` lacks the namespace because
+ *      `convex/admin/` isn't created yet. P = first missing
+ *      `convex/` contract segment.
  *
- * Everything else is unexpected.
+ *   C. TS2345 / TS2820 / TS2769 "Argument of type '\"L\"' is not
+ *      assignable ..." — *Convex schema-symbol literal*: a test
+ *      passes a table / index / field name string literal
+ *      (`ctx.db.query("notifications")`,
+ *      `.withIndex("by_user")`) that isn't in the schema's allowed
+ *      union yet, because the contract's `convex/schema.ts`
+ *      modification (which ADDS that table/index/field) hasn't run.
+ *      Tightness: accepted ONLY when the contract modifies a
+ *      schema file AND the literal appears verbatim as a token in
+ *      the contract text — a genuine typo (`"notificaitons"`) is
+ *      not in the contract, so it stays UNEXPECTED.
+ *
+ * Everything else is unexpected. New shapes should extend this
+ * family (contract-keyed), not be point-patched ad hoc.
  */
-function isExpectedRedStateError(err: TscError, contractPaths: string[]): boolean {
+function isExpectedRedStateError(
+  err: TscError,
+  contractPaths: string[],
+  contractText: string,
+): boolean {
   return (
     isExpectedRedStateImport(err, contractPaths) ||
-    isExpectedRedStateConvexApiProperty(err, contractPaths)
+    isExpectedRedStateConvexApiProperty(err, contractPaths) ||
+    isExpectedRedStateContractSymbol(err, contractPaths, contractText)
   );
 }
 
@@ -356,6 +381,66 @@ function isExpectedRedStateConvexApiProperty(
   return false;
 }
 
+/**
+ * Shape C — TS2345 / TS2820 / TS2769 on a Convex schema-symbol string
+ * literal that the contract promises a `schema.ts` modification will
+ * add (table / index / field name).
+ *
+ * Convex types `ctx.db.query(<table>)`, `.withIndex(<index>)`, and
+ * field accessors as string-literal unions derived from the schema.
+ * A correct red-state test for a ticket whose contract ADDS a table
+ * (e.g. WOR-136 contract: "schema — adds notifications table and
+ * by_status index") references `"notifications"` / `"by_user"` /
+ * `"userId"` before `schema.ts` is modified, so tsc reports
+ * `Argument of type '"notifications"' is not assignable to parameter
+ * of type '<allowed-union>'`. That is the test being correct against
+ * the contract, not a defect.
+ *
+ * Tightness — two independent gates, both required:
+ *   1. The contract must MODIFY a schema file (a contract path whose
+ *      basename is `schema` under `convex/`). If the contract isn't
+ *      touching the schema, a bad table literal is a real defect.
+ *   2. The offending literal must appear VERBATIM as a standalone
+ *      token in the contract text. The contract names the symbols it
+ *      adds ("adds notifications table", "by_status index"); a
+ *      genuine typo (`"notificaitons"`) or a hallucinated table the
+ *      contract never mentions will NOT be in the text, so it stays
+ *      correctly UNEXPECTED. This is the same discipline as Shapes
+ *      A/B: accept only what the contract explicitly promises.
+ */
+function isExpectedRedStateContractSymbol(
+  err: TscError,
+  contractPaths: string[],
+  contractText: string,
+): boolean {
+  if (err.code !== 'TS2345' && err.code !== 'TS2820' && err.code !== 'TS2769') {
+    return false;
+  }
+  // Extract the offending source string literal:
+  // `Argument of type '"notifications"' is not assignable ...`
+  const litMatch = err.message.match(
+    /Argument of type ['"]["']([^"']+)["']['"] is not assignable/,
+  );
+  if (!litMatch) return false;
+  const literal = litMatch[1];
+  if (!literal) return false;
+
+  // Gate 1: contract must modify a Convex schema file.
+  const contractModifiesSchema = contractPaths.some((cp) => {
+    const clean = cp.replace(/^\.\//, '').replace(/\.(ts|tsx|js|jsx|mts|cts)$/, '');
+    return /^convex\/.*\bschema$/.test(clean) || clean === 'convex/schema';
+  });
+  if (!contractModifiesSchema) return false;
+
+  // Gate 2: the literal appears verbatim as a standalone token in the
+  // contract text (word-boundaried so `note` doesn't match `notes`).
+  if (!contractText) return false;
+  const tokenRe = new RegExp(
+    `(^|[^A-Za-z0-9_])${literal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^A-Za-z0-9_]|$)`,
+  );
+  return tokenRe.test(contractText);
+}
+
 // ─── Lint / typecheck script runners ───────────────────────────────────
 
 async function hasScript(name: string): Promise<boolean> {
@@ -392,6 +477,7 @@ async function runScript(name: string, logPath: string): Promise<{ status: 'pass
 
 const hatches = await scanEscapeHatches();
 const contractPaths = await readContractPaths();
+const contractText = await readContractText();
 
 if (!existsSync(join(cwd, 'package.json'))) {
   const out = {
@@ -438,7 +524,8 @@ const redStateFiles = new Set<string>();
 for (const err of tscErrors) {
   if (
     isExpectedRedStateImport(err, contractPaths) ||
-    isExpectedRedStateConvexApiProperty(err, contractPaths)
+    isExpectedRedStateConvexApiProperty(err, contractPaths) ||
+    isExpectedRedStateContractSymbol(err, contractPaths, contractText)
   ) {
     redStateFiles.add(err.file);
   }
@@ -447,7 +534,7 @@ for (const err of tscErrors) {
 const expected: TscError[] = [];
 const unexpected: TscError[] = [];
 for (const err of tscErrors) {
-  if (isExpectedRedStateError(err, contractPaths)) {
+  if (isExpectedRedStateError(err, contractPaths, contractText)) {
     expected.push(err);
   } else if (err.code === 'TS2339' && redStateFiles.has(err.file)) {
     // Cascade error in a file with a proven-absent contract namespace.
