@@ -3823,3 +3823,76 @@ evidence says a reroll burns ~$ for a near-certain repeat, and
 the correct tests are being wrongly rejected by a classifier
 blind spot, which is exactly the kind of thing the experiment
 exists to find and fix in the system.
+
+---
+
+## Entry — 2026-05-16, 12:30 CDT — WOR-132 recovery: Option 3 (commit the agent's already-valid tests + promote, no reroll)
+
+Follows the entry directly above. The validator fix shipped
+(PR #50, merged by Josh). Question Josh raised: *did WOR-132
+commit its changes? will task-implement pick them up? do we
+have to reroll, or can we promote manually?*
+
+### What the artifacts showed
+
+Claude checked branch + worktree state (did not assume):
+
+- WOR-132's branch tip is `9986c39 WOR-131: ClosedCaseView…`.
+  **No WOR-132 commit exists anywhere** (not on the branch, not
+  unreachable, no remote branch, no PR). `task-tests` failed the
+  `verify-tests-exist` gate *before* committing — that gate
+  failing is exactly what blocks the commit.
+- BUT the agent's output survives **uncommitted** in the
+  worktree: `tests/unit/admin-templates.test.ts` (18 KB) and
+  `docs/contracts/wor-132.md`, both untracked (`??`),
+  unmodified.
+- Re-validated those exact files against the **merged** fixed
+  validator: `passed: true, unexpected: 0, expected: 43,
+  hatches: 0`. The tests were always correct; only the gate was
+  wrong.
+
+### The three options and the decision
+
+1. **Full reroll** — reset + regenerate. Throws away a
+   known-correct, already-generated test file and re-pays
+   test-gen (~$2–3) to recreate what we've proven is right.
+2. **Manual promote alone** — does NOT work: `task-implement`
+   builds from the committed branch; with no WOR-132 commit
+   there are no tests for it to implement against.
+3. **Operator git-plumbing the agent's output, then promote.**
+   The test + contract are *agent-produced* output (test-gen
+   wrote them); they failed to commit only because of the
+   *system's* validator bug, now fixed. Committing an agent's
+   already-generated, unmodified, validated-correct output is
+   the *permitted* "operator runs git plumbing on agent output"
+   case — same category as the earlier manual commit of WOR-107's
+   agent-written tests. NOT operator authorship: zero content
+   edits.
+
+Claude recommended **Option 3** (conditional on PR #50 merged,
+which it now is): the tests are proven correct agent output,
+committing-not-regenerating is permitted plumbing, it avoids
+re-paying test-gen, and it cleanly tests the hypothesis that the
+validator gate was the *sole* defect — if `task-implement` then
+runs clean against these committed tests, that confirms it.
+Josh: *"yes, sure we can go with Option 3."* Aligned; no
+disagreement to attribute.
+
+Honest caveat recorded at decision time: Option 3 has more
+manual plumbing steps than a reroll and marginally more room for
+operator error (must commit *exactly* the agent's output,
+unmodified, on the right branch). A reroll is more hands-off /
+more obviously system-driven. Josh weighted cost+speed and the
+clean single-variable test of "was the gate the only problem"
+over maximal hands-off purity — a reasonable call given the
+tests are already proven correct.
+
+### Execution (Mode 3 git plumbing on agent output)
+
+Committing `tests/unit/admin-templates.test.ts` +
+`docs/contracts/wor-132.md` to `archon/task-wor-132`
+**verbatim** (no content changes — operator plumbing only),
+then transition WOR-132 → In Progress to fire `task-implement`
+against the now-committed, validated tests. If `task-implement`
+proceeds normally, that is end-to-end confirmation the validator
+classifier blind spot (PR #50) was the entire defect.
