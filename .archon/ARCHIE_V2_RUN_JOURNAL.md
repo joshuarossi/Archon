@@ -3637,3 +3637,85 @@ that surplus breaking tests. Candidate Mode-2 hardenings to weigh
 
 Deliberately NOT acting on §5 now. It is recorded so the next
 session has the pattern and the decision criterion in hand.
+
+---
+
+## Entry — 2026-05-16, 08:50 CDT — WOR-129: dev loop couldn't apply a one-token reviewer-specified fix in 6 attempts → reroll (3rd exhaustion data point)
+
+Third consecutive "exhausted slot budget, failed to reach PR"
+ticket (after WOR-113 budget-edge and WOR-126 over-build). Three
+different root causes, one shared gap — recorded as a data point;
+the Mode-2 question is sharpening but still deferred.
+
+### 1. The incident — from artifacts
+
+WOR-129 ("DraftCoachPanel component — side panel with send
+gate", Story) failed to reach PR. Claude investigated from
+artifacts (run `7de7a6ec3c72d0041f5670ce0659d85b`, dispatch
+`325390786e461eb6db6332eb6a15f40e`):
+
+- `task-implement` halted at `fail-implementation-not-ready`
+  after **6 attempts**.
+- Gates: lint pass, typecheck pass, **vitest fail**, playwright
+  skipped. ~Single AC unmet.
+- Round 5 correctly diagnosed + fixed a tooltip issue (2
+  failures resolved). But one AC was **never satisfied across
+  all 6 attempts**: per StyleGuide §6.9 the chat area in
+  `DraftCoachPanel` must signal 14px font size; the test queries
+  `[class*='cc-chat-sm'], [class*='font-14'],
+  [style*='font-size:']`. The dev passed
+  `className='cc-draft-coach-chat'` — none of those tokens.
+- **The required fix: add `'cc-chat-sm'` to the className string
+  at `DraftCoachPanel.tsx:371`.** One token. The reviewer
+  specified it exactly, with the file, line, and reason, in
+  `dev-review-final.json` (`required_repairs[0]`).
+
+### 2. Diagnosis — different root cause from WOR-126
+
+WOR-126 was **over-build** (dev added a non-contract element).
+WOR-129 is the inverse: **under-implement** (dev never wired a
+contractually-required class) *plus* an inability to apply a
+trivial, explicitly-specified one-line repair across 6 rounds.
+The reviewer's diagnosis was correct and surgical every relevant
+round; the dev simply never made the change. Not gold-plating —
+a failure to consume a precise `required_repairs[]` entry.
+
+### 3. Decision (Josh + Claude aligned)
+
+Claude recommended **A — straight reroll, single variable,
+nothing bundled**, plus log as the 3rd exhaustion data point.
+Josh: *"go with A"*. No disagreement to attribute. Reroll via
+the ARCHIE_PIPELINE.md reset recipe (no PR to close → delete
+branch → remove worktree → abandon failed DB row `7de7a6ec…` →
+verify clean → transition Jira **last**).
+
+### 4. The sharpening pattern (still deferred, criterion stated)
+
+Three exhaustion cases, three distinct root causes, **one shared
+gap**: the dev loop has *no recovery path when it exhausts with a
+clean reviewer verdict in hand*.
+
+- WOR-113: tests correct, converging, ran out of budget
+  (needed +1 iteration).
+- WOR-126: dev over-built; reviewer said "delete it"; dev
+  couldn't.
+- WOR-129: dev under-implemented; reviewer said "add this one
+  token"; dev couldn't, 6×.
+
+All three had a precise, actionable `required_repairs[]` /
+verdict at exhaustion. The backlogged Mode-2 fix (from the
+WOR-113 entry) is now triple-supported: **on exhaustion with a
+clean verdict, file an autonomous followup-bug seeded with that
+verdict** (the WOR-102→WOR-139 self-heal shape) and/or **extend
+the slot budget while the failure count is monotonically
+decreasing**.
+
+Decision criterion, restated and now load-bearing: if WOR-129's
+reroll *also* fails to apply this one-token fix, that is strong
+evidence the dev agent has a systematic problem consuming
+`required_repairs` precisely — at which point the
+autonomous-followup-on-exhaustion fix stops being an
+optimization and becomes a correctness requirement. Still NOT
+building it now (single variable; need the reroll data point
+first) — but the next session should treat a same-failure reroll
+as the trigger to ship it.
