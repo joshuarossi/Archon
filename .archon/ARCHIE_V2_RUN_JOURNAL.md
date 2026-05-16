@@ -3132,3 +3132,101 @@ The distribution holds: most land first try, the occasional
 hard one takes a reroll or two, the expected cost is still
 ~100x cheaper than the engineering equivalent even counting
 rerolls.
+
+---
+
+## 2026-05-16 — Two bugs in the autonomous followup-bug pattern (WOR-121 → WOR-142)
+
+WOR-121 (CaseDetail orchestrator) was a good ticket: dev-loop
+converged at attempt-4, code judged correct, almost all tests
+passing. One post-PR synthesizer review item (ForbiddenRedirect
+navigate-state test assertion) couldn't be auto-fixed inside the
+3-retry post-fix-validation loop, so the autonomous followup-bug
+pattern correctly filed **WOR-142** to carry the residual. The
+*decision logic* worked exactly as designed — don't merge with
+an open concern, don't burn more retries, don't halt: decompose
+the residual into a precisely-scoped followup. Two *mechanical*
+bugs surfaced underneath that correct decision.
+
+### Bug 1 — filer read the wrong createIssue field (fixed PR #43)
+
+`task-file-followup-bug.ts` read jira-tool's `createIssue`
+result as `{ key }`; jira-tool returns `{ issueKey }`. `newKey`
+was `undefined`, so the subsequent `createIssueLink` /
+`transitionIssue` threw `assertIssueKey(undefined)`, got
+swallowed by their non-fatal try/catch, and WOR-142 was
+orphaned: created, but unlinked and stuck in Backlog. Fixed by
+reading `.issueKey` + a fail-loud guard. Manually link+transitioned
+WOR-142 to unblock the in-flight run.
+
+### Bug 2 — filer never set the Epic parent (fixed PR #44)
+
+Even once linked, WOR-142 had no Epic parent, so it was
+invisible in the WOR-90 ("Clarity — v1") epic board despite
+being correctly `Action item`-linked and running. Operator
+spotted it ("it isn't a child of the epic"). Re-parented
+WOR-142 → WOR-90 operationally; PR #44 makes the filer resolve
+the parent's Epic (`getIssue` `fields:['parent']`) and pass it
+as `parentKey` at creation. Best-effort: Epic-resolution failure
+files without an Epic rather than blocking — the `Action item`
+link is load-bearing for the cascade, the Epic parent is
+board-visibility only.
+
+### Bug 3 — cascade re-merges a parent PR whose code is already on main (fixed PR #45)
+
+The deeper one, surfaced by the operator's question: *"how can
+the bug ticket fix code ON THE PARENT, if the parent's code is
+not merged?"* Investigation of WOR-142's branch showed
+`6bce889 Merge branch 'archon/task-wor-121' into
+archon/task-wor-142` — the followup's `task-implement` bases its
+branch on the **parent's** branch (it must, to see and fix the
+parent's not-yet-merged code). So the followup PR is a
+**superset** of the parent PR: merging the followup lands the
+parent's commits on main too. But `jira-task-done.ts`'s cascade
+then *also* ran `gh pr merge --squash` on the parent PR
+unconditionally — a redundant/duplicate/conflicting merge of
+code already on main. The docstring's claim "main has both the
+parent's PR and this followup's fix" described a desired state
+the code's own ordering could not produce coherently.
+
+Fix (PR #45): the cascade now **verifies main rather than
+assuming lineage**. It fetches and compares
+`git diff origin/main...origin/<parentBranch>` (content diff,
+robust to squash rewriting SHAs):
+
+- parent branch has **no** changes not already on main → the
+  parent's code rode in via the followup → **close** the parent
+  PR as superseded (with an explanatory comment naming the
+  followup PR), don't re-merge.
+- parent branch **does** have unmerged changes (standalone
+  followup that didn't carry parent code) → squash-merge as
+  before.
+
+Either path → transition the parent Done, skip sweep-promote.
+Cascade comment + structured output now carry
+`parent_pr_disposition: 'merged' | 'superseded'` so the Jira
+trail is accurate either way.
+
+### What was NOT a bug — sweep suppression
+
+Operator double-checked: "the bug ticket's done should suppress
+the promotion FOR THE BUG TICKET DONE TRANSITION." Confirmed
+correct in code as-is: the followup's Done skips sweep-promote;
+the parent's *re-fired* Done (no outward Action item link) does
+the single promote. One logical completion → exactly one ticket
+promoted. PROMOTE_CAP=1 intent intact. No change needed.
+
+### Lesson
+
+A followup that must modify a parent's not-yet-merged code is
+**nested**, not independent — its branch contains the parent's.
+Any automation that later acts on the parent PR must verify the
+actual state of `main`, never assume the parent and followup are
+disjoint diffs. "Merge the parent PR" is only correct when the
+parent's code is *not* already on main; otherwise the correct
+action is "close as superseded." Three patches from one good
+ticket's one residual item — the decision logic was right the
+whole time; the plumbing under it had a field-name bug, a
+missing-Epic bug, and a lineage-assumption bug, each found only
+by looking at the actual artifacts (orphaned ticket, empty epic
+board, the `Merge branch` commit), never from the logs alone.
