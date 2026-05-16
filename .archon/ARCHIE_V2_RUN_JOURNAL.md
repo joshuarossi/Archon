@@ -2819,3 +2819,115 @@ re-run should converge faster, or surface whether the
 mock-wiring issue is a deeper test-infrastructure gap).
 
 Watching this one closely on the re-run.
+
+---
+
+## Entry — 2026-05-16, 02:20 CDT — WOR-114: stateless reroll converged where the stuck run plateaued
+
+### The two runs, side by side
+
+WOR-114 (Post-create invite sharing page). Same ticket, same
+contract, same code challenge. Two runs, opposite outcomes:
+
+**Run 1 (failed, halted In Progress):**
+- 6 tests in `invite-sharing-page.test.tsx` failed, all hard
+  5000ms timeouts, with a recurring jsdom
+  `HTMLCanvasElement.prototype.getContext` not-implemented error
+  from axe-core.
+- The dev-loop reviewer diagnosed it as **code-side**: "the copy
+  handler is async, make it fully synchronous, no async/await,
+  setCopiedKey on the same tick as the click."
+- That diagnosis was **wrong**. The dev followed it (commits
+  `869379b` make-synchronous, `8e85c47` try/catch), it didn't
+  resolve the timeouts, the reviewer kept refining the same
+  wrong code-side framing.
+- Failure-count trend across attempts 3/4/5: **6 / 6 / 6** —
+  dead flat. No convergence. The reviewer was anchored on a
+  wrong root cause and the dev couldn't fix a test-infra
+  timeout by editing a production handler.
+- Exhausted 5 slots, halted.
+
+**Run 2 (reroll, converged, merged):**
+- Full runbook reset (branch/worktree/DB cleaned, ticket
+  re-fired). **No memory of run 1** — fresh test-gen, fresh
+  reviewer, clean context.
+- Failure-count trend across attempts: **21 → 6 → 2 → 0**.
+  Monotonic descent. Converged at attempt-5, merged via the
+  normal synthesize → parse-synthesis → merge-pr tail.
+- One reroll. Got through on the second try.
+
+### Why this matters
+
+The operator's working theory, now supported by a clean A/B:
+
+> Convergence within 5 slots is probabilistic. Some tickets land
+> first try, some need a reroll, some need 2-3. The cost of a
+> reroll (~$11, ~30 min) is just part of the cost of automation.
+> A stateless reroll is a legitimate retry primitive, not a
+> workaround for a broken pipeline.
+
+Run 1 vs Run 2 is the proof. Nothing about the pipeline changed
+between them. The only difference was a fresh roll of the dice:
+
+- Run 1's reviewer anchored on a wrong code-side diagnosis and
+  never escaped it (5 slots, flat 6 failures).
+- Run 2's reviewer (cold start, no baggage) found a path that
+  converged (21 → 0).
+
+This is *why* statelessness is a feature, not a limitation.
+Earlier I treated "reset means no memory of the prior attempt"
+as a downside. It's the opposite. A stateful resume would carry
+forward run 1's poisoned context — the reviewer's wrong
+diagnosis, the dev's dead-end commits. The stateless reroll
+discards all of it and re-samples the convergence distribution
+from scratch. Sometimes the fresh sample is the one that works.
+
+### What this does NOT argue
+
+It does not argue the tracked bugs are unimportant. Two stand:
+
+1. **Reviewer misdiagnosis heuristic.** When many tests in one
+   file all fail with hard `Test timed out` (not assertion
+   failures), especially alongside jsdom/canvas/fake-timer
+   environment errors, the failure is almost certainly
+   test-infrastructure, not production code. The reviewer should
+   classify `test_needs_edits` and stop sending the dev at
+   production handlers. Run 1 burned 5 slots precisely because
+   the reviewer lacked this heuristic. Shipping it would shift
+   the convergence distribution toward first-try success
+   (fewer rerolls = lower expected cost).
+
+2. **dev-attempt / fix-after-validate co-fire waste.** Their
+   `when:` is `validate.passed == 'false' || verdict ==
+   'reject'`. On a `test_needs_edits` verdict, `edit-tests-N`
+   fires correctly — but `dev-attempt-N` ALSO fires because
+   `validate.passed == 'false'` is always true on a test-side
+   failure (failing tests are *why* we're in test-edit mode).
+   The dev correctly no-ops ("no production changes needed,
+   nothing to commit") but burns ~$1-3 and a slot every
+   test-side round. Fix: gate dev-attempt/fix-after-validate on
+   `verdict == 'reject'` only; the three-way verdict is the
+   authoritative router and `validate.passed` is redundant
+   once it's trusted (parse-dev-review fails closed to reject).
+
+Both are **optimizations that lower expected cost**, not
+**correctness blockers**. The system recovers economically on
+its own via reroll; these fixes just make it need fewer
+rerolls. They will be shipped one at a time, after the current
+run's data is in, never bundled — single variable per
+experiment.
+
+### Reroll tally so far (this run, WOR-95..115)
+
+- 17 tickets landed first-try (clean, 0 rerolls)
+- 7 needed >=1 reroll; ~15 of those rerolls concentrated in the
+  3 R&D-tax tickets (WOR-95/105/107 — debugged the pipeline
+  while they ran)
+- Steady-state hard tickets (WOR-102/104/113/114): 1-2 rerolls
+  each, all eventually converged
+- Zero permanent failures. Zero operator code-edits on Clarity.
+
+The distribution holds: most land first try, the occasional
+hard one takes a reroll or two, the expected cost is still
+~100x cheaper than the engineering equivalent even counting
+rerolls.
