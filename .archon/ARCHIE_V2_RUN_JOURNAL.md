@@ -2922,3 +2922,104 @@ future project.
 
 This is the unit-economics slide for the seed deck, computed
 from the system's own telemetry — not estimated, measured.
+## Entry — 2026-05-16, 01:25 CDT — Design principle: single-responsibility agents with concrete reference standards
+
+### The observation
+
+The dev-loop reviewer (`archon-review-dev-attempt.md`, 165 lines)
+produces consistently surgical reviews. Examples from this run:
+
+- WOR-102: identified the closure-narrowing as a contract-vs-impl
+  mismatch, named the exact line, named the regression commit by SHA
+- WOR-113: "Production handleSubmit is correct... the 3 remaining
+  vitest failures are test-side: the mutation mock does not return
+  a resolved promise" — exact root cause + example fix code
+- WOR-104: caught the disabled-state ambiguity and routed it
+  correctly across iterations
+
+These are not "looks good / needs work" reviews. They are precise,
+actionable, and correctly classify test-side vs. impl-side.
+
+### The hypothesis (operator)
+
+The review quality is high *because* the prompt is small and
+tightly scoped, combined with the high-signal artifacts it reads.
+There is nothing to distract it from doing one job extremely well.
+
+### Why this holds — the mechanism
+
+Four properties of the dev-loop reviewer:
+
+1. **Single responsibility.** One question: "given this dev
+   attempt + the contract + the validator output, is the
+   implementation correct, and if not, what precisely is wrong,
+   and is it test-side or impl-side?" No "also check docs, also
+   assess scope, also evaluate comments." The post-PR fleet
+   *splits* those into 5 specialized agents precisely because
+   cramming them into one prompt degrades each.
+
+2. **High-signal artifacts, no spelunking.** It reads the
+   contract (the spec), the validator's deterministic output
+   (ground truth — what actually failed), and the diff. It does
+   not discover requirements or run anything. The contract IS the
+   requirements; the validator output IS the test result. The
+   reviewer adjudicates between them — a tractable, bounded
+   reasoning task.
+
+3. **Fresh context per invocation.** Each of the 5 slot-reviews
+   is a clean context. No accumulated cruft from prior attempts
+   polluting judgment.
+
+4. **Concrete reference standard.** Not "is this good code in
+   your opinion" but "does this match the contract." A checkable
+   standard turns subjective judgment into adjudication. This is
+   why the reviewer can be decisive instead of hedging.
+
+### The corroborating negative evidence
+
+The biggest, fuzziest-behaving prompt in the pipeline is the
+synthesizer (`archon-synthesize-review.md`, 401 lines) — and it's
+the one that had drift bugs (expecting a test-coverage reviewer
+that doesn't exist; dropping scope findings) and the
+NEEDS_DISCUSSION-orphan ambiguity. More scope, more lines, less
+crisp. Consistent with the hypothesis.
+
+And: nearly every failure this run was NOT in a small
+single-purpose agent. The agents did their jobs well. The bugs
+were in the *plumbing* — workflow routing (silent SKIP, enum
+orphan), commit conventions (test-editor not committing),
+validator attribution (vitest blocking scope), prompt/workflow
+drift (synth reviewer set). The meta-programming framing again:
+the agents are reliable functions; the bugs are in the control
+flow connecting them.
+
+### The design principle (for the clean-room rebuild)
+
+**Every agent does one atomic job against high-signal inputs with
+a concrete reference standard. Resist the temptation to make any
+agent do two things.**
+
+Every time you want to add "also check X" to a prompt, that is a
+signal X should be a separate node with its own fresh context.
+The cost is more nodes (more orchestration surface) — but the
+orchestration is the part that can be made typed and testable
+(the mirror). Agent quality is the part that cannot be easily
+debugged, so keep each agent's job small enough that it does not
+need debugging.
+
+Corollary for the rebuild: this should be enforced
+**structurally**, not by convention. The current pipeline relies
+on prompt authors choosing to keep agents narrow. The rebuilt
+orchestration system should make "one agent, one job, one
+reference standard, fresh context" the path of least resistance —
+e.g. a node type that takes (inputs, reference-artifact,
+single-question) and refuses multi-purpose prompts. Where the
+post-PR fleet split one reviewer into five specialists by hand,
+the system should make that split the default shape.
+
+The whole architecture, restated: test-gen writes tests against
+the contract; dev-attempt writes code against the contract;
+review-dev-attempt adjudicates code-vs-contract using validator
+ground truth; the synthesizer only consolidates. Each step is one
+job, one standard, one fresh context. The quality follows from
+the structure, not from any single clever prompt.
