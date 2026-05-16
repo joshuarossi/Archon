@@ -10,13 +10,19 @@
  *
  * 2. **Action-item cascade.** If this ticket has an outward "Action item"
  *    link, it was filed as a followup that resolves a parent ticket's
- *    residual failure. When it goes Done, the parent is now actually
- *    complete (main has both the parent's PR and this followup's fix).
- *    Transition the parent to Done — and SKIP the sweep-promote step
- *    below, because the parent's own Done event will handle promoting
- *    the next ticket. (If we ran sweep-promote here too, two tickets
- *    would get promoted from one logical completion, breaking
- *    PROMOTE_CAP=1's intent.)
+ *    residual failure. The followup's branch is based on the parent's
+ *    branch (it must be, to see and fix the parent's not-yet-merged
+ *    code), so when the followup's PR merges, the parent's commits
+ *    land on main as part of that same merge. The cascade therefore
+ *    VERIFIES the state of main rather than assuming it: if the parent
+ *    branch has no changes not already on main, its PR is CLOSED as
+ *    superseded (re-merging would be redundant/conflicting); otherwise
+ *    (standalone followup that didn't carry parent code) the parent PR
+ *    is squash-merged. Either way the parent is transitioned Done.
+ *    SKIP the sweep-promote step below — the parent's own Done event
+ *    will handle promoting the next ticket. (If we ran sweep-promote
+ *    here too, two tickets would get promoted from one logical
+ *    completion, breaking PROMOTE_CAP=1's intent.)
  *
  * 3. Sweep the whole project for Backlog non-Epic tickets that have zero
  *    inward Blocks links remaining, and transition each to
@@ -156,6 +162,11 @@ const outwardActionItem = (thisIssue.fields.issuelinks ?? []).find(
 
 let cascadeTarget: string | null = null;
 let cascadeMergedPr: number | null = null;
+// Which disposition the parent PR got: 'merged' (standalone followup
+// fallback) or 'superseded' (parent code already landed via the
+// followup's merge; parent PR closed, not merged). Drives accurate
+// cascade-comment wording.
+let cascadeParentDisposition: 'merged' | 'superseded' | null = null;
 
 if (outwardActionItem?.outwardIssue?.key) {
   const parentKey = outwardActionItem.outwardIssue.key;
@@ -172,6 +183,24 @@ if (outwardActionItem?.outwardIssue?.key) {
       { cwd: process.cwd() },
     );
     const repo = nameWithOwner.trim();
+
+    // The followup's own PR (this ticket's branch). Used only for the
+    // supersede comment text; a missing value degrades to "?" rather
+    // than blocking the cascade.
+    const followupBranch = `archon/task-${thisKey.toLowerCase()}`;
+    let followupPrNumber: number | undefined;
+    try {
+      const { stdout: followupPrJson } = await execFileAsync(
+        'gh',
+        ['pr', 'list', '--repo', repo, '--head', followupBranch, '--state', 'all', '--json', 'number'],
+        { cwd: process.cwd() },
+      );
+      const followupPrs = JSON.parse(followupPrJson) as Array<{ number: number }>;
+      followupPrNumber = followupPrs[0]?.number;
+    } catch {
+      followupPrNumber = undefined;
+    }
+
     const { stdout: prListJson } = await execFileAsync(
       'gh',
       [
@@ -188,16 +217,81 @@ if (outwardActionItem?.outwardIssue?.key) {
       log(`  ✗ No open PR found for parent branch ${parentBranch}. Falling through to normal sweep.`);
     } else {
       const parentPr = prs[0];
-      log(`  Found PR #${parentPr.number} (${parentPr.url}). Squash-merging.`);
 
-      // b. Squash-merge the parent's PR.
-      const { stdout: mergeOut } = await execFileAsync(
-        'gh',
-        ['pr', 'merge', String(parentPr.number), '--squash', '--delete-branch', '--repo', repo],
+      // b. Decide: merge the parent PR, or close it as superseded.
+      //
+      // The followup's task-implement bases its branch on the parent's
+      // branch (it must, to see and fix the parent's not-yet-merged
+      // code). So by the time the followup's PR merges to main, the
+      // parent's commits have ALREADY landed on main as part of the
+      // followup's merge. Re-running `gh pr merge` on the parent here
+      // would then either be a redundant empty merge, produce a
+      // duplicate squashed commit, or conflict.
+      //
+      // Detect the real state of main rather than assuming the lineage:
+      // fetch and compare the parent branch's content against main. An
+      // empty `git diff origin/main...origin/<parentBranch>` means the
+      // parent branch carries no changes that aren't already on main —
+      // i.e. its code rode in via the followup. (Content diff, not SHA
+      // ancestry, so it is robust to squash-merges rewriting SHAs.)
+      //
+      //   - already on main  → CLOSE the parent PR as superseded
+      //                         (merging would be redundant/conflicting).
+      //   - NOT on main       → squash-merge it (standalone-followup
+      //                         fallback: the followup did not carry the
+      //                         parent's code, so the parent still needs
+      //                         its own merge).
+      // Either way the parent ends Done with its code on main.
+      await execFileAsync('git', ['fetch', 'origin', 'main', parentBranch], {
+        cwd: process.cwd(),
+        maxBuffer: 50 * 1024 * 1024,
+      }).catch(() => undefined);
+      const { stdout: parentOnlyDiff } = await execFileAsync(
+        'git',
+        ['diff', '--stat', `origin/main...origin/${parentBranch}`],
         { cwd: process.cwd(), maxBuffer: 50 * 1024 * 1024 },
-      );
-      log(`  ${mergeOut.trim()}`);
-      cascadeMergedPr = parentPr.number;
+      ).catch(() => ({ stdout: 'DIFF_FAILED' }));
+      const parentAlreadyOnMain =
+        parentOnlyDiff !== 'DIFF_FAILED' && parentOnlyDiff.trim().length === 0;
+
+      if (parentAlreadyOnMain) {
+        log(
+          `  Parent branch ${parentBranch} has no changes not already on main ` +
+            `(rode in via followup ${thisKey}). Closing PR #${parentPr.number} as superseded.`,
+        );
+        const supersedeComment =
+          `🔁 Superseded by followup **${thisKey}** (PR #${followupPrNumber ?? '?'}). ` +
+          `The followup branch was based on this branch, so this PR's commits landed ` +
+          `on \`main\` as part of the followup's merge. Closing this PR (merging it ` +
+          `again would be redundant/conflicting); ${parentKey} is being transitioned ` +
+          `Done by the action-item cascade — same end state as a normal merge.`;
+        await execFileAsync(
+          'gh',
+          [
+            'pr', 'close', String(parentPr.number),
+            '--comment', supersedeComment,
+            '--delete-branch',
+            '--repo', repo,
+          ],
+          { cwd: process.cwd(), maxBuffer: 50 * 1024 * 1024 },
+        );
+        log(`  Closed PR #${parentPr.number} (superseded).`);
+        cascadeMergedPr = parentPr.number;
+        cascadeParentDisposition = 'superseded';
+      } else {
+        log(
+          `  Parent branch ${parentBranch} has changes not on main ` +
+            `(followup did not carry parent code). Squash-merging PR #${parentPr.number}.`,
+        );
+        const { stdout: mergeOut } = await execFileAsync(
+          'gh',
+          ['pr', 'merge', String(parentPr.number), '--squash', '--delete-branch', '--repo', repo],
+          { cwd: process.cwd(), maxBuffer: 50 * 1024 * 1024 },
+        );
+        log(`  ${mergeOut.trim()}`);
+        cascadeMergedPr = parentPr.number;
+        cascadeParentDisposition = 'merged';
+      }
 
       // c. Transition the parent to Done. (This Done transition will re-fire
       //    jira-task-done.ts — that run will see no outward Action item and
@@ -217,7 +311,11 @@ if (outwardActionItem?.outwardIssue?.key) {
           body: [
             `🔁 **Auto-cascade from ${thisKey}.**`,
             ``,
-            `${thisKey} was an Action item filed when this ticket's task-implement run failed three post-fix-validation retries. ${thisKey} merged its fix to main (PR #${cascadeMergedPr}), unsticking the path. This ticket's PR has now been squash-merged and the ticket transitioned to Done — same effect as if the original retries had succeeded.`,
+            `${thisKey} was an Action item filed when this ticket's task-implement run failed three post-fix-validation retries. ${thisKey} has merged its fix to main, unsticking the path.`,
+            ``,
+            cascadeParentDisposition === 'superseded'
+              ? `${thisKey}'s branch was based on this ticket's branch, so this ticket's commits landed on main as part of ${thisKey}'s merge. This ticket's PR #${cascadeMergedPr} has been **closed as superseded** (re-merging would be redundant) and the ticket transitioned to Done — same end state as a normal merge.`
+              : `This ticket's PR #${cascadeMergedPr} has been **squash-merged** and the ticket transitioned to Done — same effect as if the original retries had succeeded.`,
           ].join('\n'),
           fields: {
             cascade_from: thisKey,
@@ -235,7 +333,8 @@ if (outwardActionItem?.outwardIssue?.key) {
         ``,
         `- Outward Blocks links deleted: **${deletedCount}**`,
         `- Cascade target (parent): **${parentKey}**`,
-        `- Parent PR merged: **#${cascadeMergedPr}**`,
+        `- Parent PR #${cascadeMergedPr}: **${cascadeParentDisposition}** ` +
+          `(${cascadeParentDisposition === 'superseded' ? 'code already on main via followup; PR closed' : 'squash-merged'})`,
         `- Sweep-promote: **skipped** (parent's Done event handles it)`,
       ];
       await postWorkflowComment({
@@ -245,7 +344,8 @@ if (outwardActionItem?.outwardIssue?.key) {
         fields: {
           outward_blocks_deleted: deletedCount,
           cascade_target: parentKey,
-          parent_pr_merged: cascadeMergedPr,
+          parent_pr: cascadeMergedPr,
+          parent_pr_disposition: cascadeParentDisposition,
           sweep_promote_skipped: true,
         },
       }).catch(() => undefined);
@@ -254,7 +354,8 @@ if (outwardActionItem?.outwardIssue?.key) {
         JSON.stringify({
           outward_blocks_deleted: deletedCount,
           cascade_target: parentKey,
-          parent_pr_merged: cascadeMergedPr,
+          parent_pr: cascadeMergedPr,
+          parent_pr_disposition: cascadeParentDisposition,
           tickets_promoted: [],
           epic_completed: null,
         }),
