@@ -3719,3 +3719,107 @@ optimization and becomes a correctness requirement. Still NOT
 building it now (single variable; need the reroll data point
 first) — but the next session should treat a same-failure reroll
 as the trigger to ship it.
+
+---
+
+## Entry — 2026-05-16, 11:10 CDT — WOR-132: test-gen validator rejects CORRECT red-state Convex tests (TS2339 ≠ TS2307 gap)
+
+A *different failure class* from the WOR-126/129 dev-loop
+exhaustions. WOR-129's reroll **converged** (Done, PR #44
+merged 15:36:05Z — the one-token `cc-chat-sm` fix landed on
+fresh context, resolving that backlog concern for now). Its
+Done promoted WOR-132, and WOR-132 failed in **`task-tests`** at
+`verify-tests-exist`, never reaching `task-implement`.
+
+### 1. Symptom (from artifacts, run `acdbd1a5dd24f4e1485bddb98dd0f265`)
+
+`test-gen-validate-report.json`: `passed:false`, lint pass,
+typecheck **fail**, `escape_hatches_found: 0`,
+`expected_typecheck_errors: 0`, **`unexpected_typecheck_errors:
+43`**. All 43 are `TS2339 "Property 'admin' does not exist on
+type {...}"` (and downstream property errors) in
+`tests/unit/admin-templates.test.ts`. Contract paths:
+`convex/admin/templates.ts`, `convex/admin/templateVersions.ts`.
+
+### 2. Investigation — are the tests correct or malformed?
+
+Claude checked the contract and the generated test, did not
+assume:
+
+- `docs/contracts/wor-132.md` promises exactly
+  `convex/admin/templates.ts` (`listAll`, `create`,
+  `publishNewVersion`, `archive`) and
+  `convex/admin/templateVersions.ts` (`list`).
+- The test does `import { api } from
+  "../../convex/_generated/api"` (this module **exists and
+  resolves** — it's codegen for the *current* schema) and then
+  references `api.admin.templates.listAll`,
+  `api.admin.templateVersions.list`, etc. — **exactly the
+  contract-promised surface**.
+- `convex/admin/` does **not** exist at red state (correct —
+  `task-implement` creates it). So the resolved `api` object has
+  no `admin` namespace yet → TypeScript emits **`TS2339`** on
+  every reference.
+
+**Verdict: the generated tests are CORRECT.** They faithfully
+encode the contract. This is not a test defect.
+
+### 3. Root cause (code-level, confirmed)
+
+`.archon/scripts/test-gen-validate.ts:247`,
+`isExpectedRedStateError`:
+
+```ts
+if (err.code !== 'TS2307') return false;
+```
+
+The entire expected-vs-unexpected classifier is built around the
+**`TS2307` "cannot find module" shape** — a *direct import* of a
+not-yet-created contract path (`import { x } from
+"../../convex/admin/templates"`). It string-matches the import
+specifier against contract paths. It has **no model** of the
+**Convex access pattern**: Convex tests never import functions
+directly — they access them as *properties on the single
+generated `api` object*. A correct Convex red-state test
+referencing contract-promised-but-not-yet-built functions
+therefore produces **`TS2339` on `api.<namespace>`**, never
+`TS2307`. The classifier hard-returns false for anything that
+isn't `TS2307`, so it counts all 43 as real defects and fails
+the gate.
+
+Same *lesson* as the WOR-95 saga ("distinguish expected
+red-state errors from real defects"), a different *manifestation*
+the earlier hardening didn't anticipate: WOR-95 was about
+forbidding suppression hatches + recognizing `TS2307`; this is a
+`TS2339`-on-`api`-property red-state shape entirely outside the
+classifier's model.
+
+### 4. Implication for the reroll decision (deferred to Josh)
+
+A **plain reroll will almost certainly fail identically**: the
+tests are correct, so fresh test-gen produces structurally the
+same correct-but-`TS2339` tests → same misclassification. The
+only ways a reroll "passes" would be the agent (a) suppressing
+errors — the validator *also* rejects that by design, or (b)
+restructuring away from idiomatic Convex `api` access — worse
+tests. So unlike WOR-126/129, this is **not a retry candidate**;
+it points at a real Mode-2 validator fix:
+
+> Extend `isExpectedRedStateError` to also accept `TS2339`
+> "Property 'X' does not exist on type ..." when the missing
+> property path corresponds to a contract-promised module
+> namespace (e.g. contract path `convex/admin/templates.ts`
+> ⇒ tolerate `TS2339` on `api.admin.templates`). Must stay
+> tight enough not to mask genuine property-typo defects —
+> gate on the property chain mapping to a declared contract
+> path, same discipline as the existing `TS2307` path-match.
+
+This is a **Mode 1/2 crossing** (editing an Archie pipeline
+script — `.archon/scripts/`), to be done with the preserve-prior
++ validate discipline, NOT a Clarity change. Recorded, not yet
+built — Josh decides reroll vs. ship-the-validator-fix. Claude's
+recommendation: **do not reroll; fix the validator** — the
+evidence says a reroll burns ~$ for a near-certain repeat, and
+the correct tests are being wrongly rejected by a classifier
+blind spot, which is exactly the kind of thing the experiment
+exists to find and fix in the system.
