@@ -101,6 +101,62 @@ matters.
 | Resilience/Perf | p95 latency vs a stated SLO + error-path & load behavior (k6-class) | falls over / no error handling | meets SLO under load, degrades gracefully |
 | Product integrity | End-to-end core-user-journey pass rate via exploratory + scripted E2E on the **running app** | journeys broken | all core journeys work as a real user would experience them |
 
+## Compliance is SPECIFIED, then built, then verified — the harness cannot retrofit it
+
+**The single most important architectural point (Josh, 2026-05-16).**
+The harness *measures* conformance; it cannot *create* it. If a
+control ("encrypt PHI at rest", "audit-log every record access",
+"auto-logoff after N min", "data export/erasure endpoint", "no PII in
+logs", "WCAG AA on every interactive element") is not in the PRD →
+not in the TechSpec → not a ticket AC → Archie never builds it → the
+harness correctly scores NON-CONFORMANT. We would have built a
+perfect instrument for an app that was never *asked* to be compliant.
+
+This is not a flaw — it is the pipeline's actual architecture, and it
+is what makes the claim defensible. Compliance invariants ride the
+**same spec → AC → test → implement → verify rail** as every other
+project-specific invariant (identical mechanism to how Clarity's
+"Coach never quotes the other party's raw private input" became an
+enforced AC). The marketable claim is therefore precisely:
+
+> *Feed Archie a compliance-bearing spec and it produces an app that
+> provably meets it, verified by the harness.* The spec is the
+> **input**, conformance is the **output**, the harness is the
+> **proof** — and the harness doubles as a **spec-completeness
+> audit**: a control with no AC mapping to it is a PRD/spec gap, not
+> merely an app failure.
+
+Required ordering for any compliance claim:
+
+1. **PRD** enumerates target regimes as *concrete technical
+   controls* — never "be HIPAA compliant", but the actual safeguard
+   list (encryption at rest/transit, access audit log, auto-logoff,
+   integrity controls, RBAC, export/erasure, no-PII-in-logs, the
+   specific WCAG criteria).
+2. **TechSpec** turns each control into an architectural mandate
+   (encryption boundary, audit-log schema, session-timeout
+   middleware, …).
+3. **epic-decompose** carries them into ticket ACs — likely both
+   *dedicated compliance tickets* (an audit-logging ticket, an
+   encryption-at-rest ticket) and cross-cutting compliance ACs on
+   feature tickets.
+4. **task-tests** authors tests that *enforce* each control (PHI
+   encrypted at rest; every record access writes an audit row;
+   axe-core per screen).
+5. **Harness verifies independently** AND flags any harness-checked
+   control with no corresponding AC as a **spec gap**.
+
+**Implication for Clarity (honest, expected):** Clarity's current PRD
+was written for an AI mediation app, NOT a compliance demo. Scoring
+Clarity on HIPAA/SOC2-technical will legitimately show
+NON-CONFORMANT on many controls — that is *correct and expected*, not
+a pipeline failure. Clarity proves "can it autonomously build a real
+app." The **compliance claim requires its own spec-first
+demonstration**: a PRD/TechSpec authored *with* the compliance
+controls baked in, Archie builds it, the harness proves it. Do not
+conflate the two — and do not present Clarity's (expected) low
+compliance score as evidence against the pipeline.
+
 ## The headline IS the conformance matrix; the 0–100 is its rollup
 
 The primary artifact is a **conformance matrix**, not a bare number.
