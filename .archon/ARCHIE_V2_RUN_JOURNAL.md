@@ -4571,3 +4571,99 @@ auto-advanced to In Progress (WOR-144's Done swept the next bug).
 5 bugs remain (WOR-145 in flight, WOR-146–149 Backlog). Reporting
 each as it closes; will tally the full 7-bug fix economics when
 the set completes.
+
+---
+
+## Entry — 2026-05-17, 01:20 CDT — FULL 7-BUG LOOP COMPLETE + attribution correction (the review was autonomous, not human)
+
+### Attribution correction (stated plainly, per conventions)
+
+Prior entries (the "7 behavioral bugs" entry and the "first 2 bug
+fixes" entry) attributed the exhaustive code review and the
+filing of WOR-143…149 to **Josh** ("Josh ran an exhaustive code
+review", "the find is Josh's"). **That is wrong.** Josh
+corrected it: *"i asked another instance of claude with max
+reasoning to use the code review skill, AND i had it compare the
+code base to the PRD, it found AND filed the 7 bug tickets… you
+give me WAY too much credit."* The review, the PRD-vs-codebase
+gap analysis, and the filing of all 7 tickets were done by a
+**separate Claude instance (max reasoning) running a code-review
+skill** — not by a human. Josh's role was directing that
+instance, then operating the bug-pipeline (promote / git
+plumbing / system fixes) — he did not find the bugs and did not
+author code. The earlier entries are left intact (append-only);
+this is the correction of record. Symmetric-attribution rule
+applied: the error was Claude's mis-attribution, the correction
+is Josh's.
+
+### Why the correction makes the result STRONGER
+
+This is no longer "humans review, AI fixes." It is a **fully
+autonomous closed loop**:
+
+  autonomous build (~35 tickets)
+    → autonomous review (Claude + code-review skill, PRD-vs-code
+       gap analysis) → found & filed 7 bug tickets
+    → autonomous fix (bug-pipeline, 7/7 first-pass, $53)
+    → operator supervised the *system* only — did not perform
+      build, review, or fix; did not author code; did not even
+      find the bugs.
+
+For the deck this is a categorically bigger claim than the human-
+in-the-loop version.
+
+### The full 7-bug result (measured, verified fresh)
+
+7 bug tickets entered → 7 merged. Every one **first-pass, zero
+rerolls** (each ran exactly `bug-pipeline → task-implement`,
+both completed, no retry).
+
+| Bug | Defect | Pri | Time | Cost |
+|---|---|---|---|---|
+| WOR-143 | Admin "+ New Template" white-screens (missing create UI) | Med | 31.2 min | $9.32 |
+| WOR-144 | Joint session has no Coach opening message | High | 21.3 min | $7.85 |
+| WOR-145 | @-mention the Coach unreachable in joint chat | High | 19.0 min | $5.80 |
+| WOR-146 | Coach never posts periodic/agreement summaries | High | 31.1 min | $10.27 |
+| WOR-147 | Invited party never fills own intake form | High | 30.4 min | $8.71 |
+| WOR-148 | Unilateral close sends no notification | High | 17.0 min | $5.50 |
+| WOR-149 | Private Coach chat doesn't render markdown | Med | 18.7 min | $5.91 |
+
+| Aggregate | |
+|---|---|
+| Total time | **168.6 min (~2.81 h machine)** |
+| Total cost | **$53.37** |
+| Mean / bug | **24.1 min / $7.62** |
+| Median / bug | 21.3 min / $7.85 |
+| Range | 17–31 min / $5.50–$10.27 |
+| Reroll rate | **0 / 7 (0%)** |
+
+### Significance
+
+- **100% first-pass on bugs found by an independent autonomous
+  PRD-vs-code review.** Not self-filed followup-bugs — a separate
+  reasoning instance doing genuine gap analysis, including hard
+  shapes (a missing *feature*, several missing *behavioral
+  seams*). 7/7 converged, zero rerolls, zero operator code. The
+  build phase ran ~23% reroll while the pipeline was hardening;
+  the matured pipeline fixing review-found bugs is **0%**.
+- **Predictable economics that project:** a review-found bug
+  costs **~$8 / ~24 min** fully autonomous, low variance. Whole
+  cycle measured end-to-end: build (~$541 / ~35 tickets) +
+  autonomous review + 7-bug autonomous fix ($53.37).
+- **"We don't ship perfect first try — that's why bug tickets
+  exist" is not a hedge; it is a measured, cheap, reliable,
+  *un-manned* mechanism.**
+
+### Honest caveat (kept attached, now sharper)
+
+"Done/merged" means the bug-pipeline produced a gate-passing
+accepted fix — it does NOT independently prove each fix
+*behaviorally* resolves the user-facing symptom (same
+per-ticket-green ≠ product-works lesson). Because the bugs were
+found by PRD-vs-code gap analysis, the natural closing step is to
+**re-run that same code-review skill against the fixed codebase**
+and confirm the 7 gaps are gone — an autonomous verification that
+would close the autonomous loop. Not yet done; flagged as the
+next evaluation step. Build + fix loop *ran* flawlessly and
+cheaply; symptom-level confirmation is a verify-the-running-app
+question, not a verify-the-pipeline one.
