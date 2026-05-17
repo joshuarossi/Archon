@@ -591,8 +591,19 @@ nodes:
         report: { type: string }
       required: [ passed, report ]
 
+  # Auto-format chokepoint #1: after the test-repair step, which commits its
+  # own changes. Without this, repair-tests-from-final-review can land
+  # unformatted test files that re-break a downstream `prettier --check` CI
+  # gate. No-ops on repos without a `format` script (e.g. ConflictCoach).
+  - id: format-after-test-repair
+    depends_on: [ validate-after-test-repair ]
+    when: "$implementation-quality-final.output.failure_scope == 'tests'"
+    bash: |
+      set -euo pipefail
+      bun /home/user/Archon/.archon/scripts/task-format.ts
+
   - id: implementation-ready
-    depends_on: [ validate-1, validate-2, validate-3, validate-4, validate-5, implementation-quality-final, validate-after-test-repair ]
+    depends_on: [ validate-1, validate-2, validate-3, validate-4, validate-5, implementation-quality-final, validate-after-test-repair, format-after-test-repair ]
     trigger_rule: all_done
     bash: |
       # Substitution rules in this script:
@@ -654,8 +665,19 @@ nodes:
     context: fresh
     command: archon-generate-docs
 
-  - id: open-pr
+  # Auto-format chokepoint #2: final safety net immediately before the branch
+  # is pushed. Catches generate-docs commits and anything the dev/fix loop
+  # produced that chokepoint #1 did not cover (e.g. non-test failure scopes
+  # where format-after-test-repair was skipped). No-ops without a `format`
+  # script; always exits 0 (fix-up, not a gate).
+  - id: format-before-pr
     depends_on: [ generate-docs ]
+    bash: |
+      set -euo pipefail
+      bun /home/user/Archon/.archon/scripts/task-format.ts
+
+  - id: open-pr
+    depends_on: [ format-before-pr ]
     bash: |
       # Push the branch and open a GitHub PR. Posts the PR URL as a Jira comment.
       set -euo pipefail
