@@ -4432,3 +4432,76 @@ hedged past evidence it had personally produced earlier in the
 same session and made Josh re-supply proof already in hand —
 recorded so the pattern (under-claiming by ignoring in-session
 evidence) is visible, not just the conclusion.
+
+---
+
+## Entry — 2026-05-17, 00:30 CDT — Exhaustive code review found 7 behavioral bugs in the completed app (WOR-143…149)
+
+Josh ran an exhaustive code review of the finished Clarity build and
+found **7 bugs**, filed as Bug tickets on the WOR board. Verified
+present (not assumed): all 7 exist, type Bug, status Backlog,
+priorities as listed.
+
+| Ticket | Gap | PRD | Priority |
+|---|---|---|---|
+| WOR-143 | Admin "+ New Template" white-screens; no create UI | US-14b / FR-10 | Medium (P1) |
+| WOR-144 | Joint session has no Coach opening message | US-09b | High (P0) |
+| WOR-145 | @-mention the Coach is unreachable in joint chat | US-10c | High (P0) |
+| WOR-146 | Coach never posts periodic / agreement summaries | US-10b | High (P0) |
+| WOR-147 | Invited party never fills their own intake form | US-04 | High (P0) |
+| WOR-148 | Unilateral case close sends no notification | US-11e | High (P0) |
+| WOR-149 | Private Coach chat does not render markdown | US-06a | Medium (P0, minor) |
+
+### What these 7 bugs actually are (the important read)
+
+Every one is a **cross-ticket integration / missing-behavior**
+defect — a flow that doesn't connect — NOT a code defect in any
+single module:
+
+- "no Coach opening message", "Coach never posts summaries",
+  "@-mention unreachable", "invitee never fills intake",
+  "unilateral close fires no notification" = the *seams between*
+  independently-correct modules. Each constituent ticket (Coach AI
+  module, joint chat, invite, close handler) passed its own ACs and
+  tests in isolation. Nothing tested the end-to-end behavior the
+  PRD user stories (US-09b, US-10b/c, US-04, US-11e) require because
+  those seam behaviors were never carried into a ticket AC.
+
+### Why this is the most honest data point of the run
+
+This is the **conformance-benchmark thesis, empirically
+demonstrated**: ~35 green tickets, build clean, 1233 unit tests
+passing, 81% coverage, ~99% on core logic — and the running app
+*still* has 7 real behavioral gaps, 5 of them P0/High. **Per-ticket
+green ≠ the product works.** Same lesson family as the
+aggregate-build finding, now at the behavioral layer. It directly
+vindicates the caveat kept in every recent entry ("build complete
+≠ evaluation complete") and the entire calibrate-first
+independent-harness design — if we had reported "35/35 Done = an
+80" we would have shipped a confidently-wrong number for an app
+missing its Coach opening message.
+
+### Root cause is upstream (spec decomposition), not the pipeline
+
+This is not the pipeline failing to build what it was told — it is
+the **epic-decompose not carrying every PRD user-story behavior
+into a concrete ticket AC**. If US-09b ("Coach opens the joint
+session") had been an AC on a ticket with an enforcing test, the
+pipeline would have built it (that is exactly the rail every
+specced invariant rides). Unspecced → unbuilt → correctly absent —
+the same principle already recorded in
+`ARCHIE_QUALITY_BENCHMARK.md` ("compliance must be specified;
+the harness/pipeline cannot retrofit it"). The actionable Mode-2/3
+finding: decomposition completeness vs. the PRD's user stories is
+itself a gate that does not currently exist. The 7 bugs are now
+filed and will ride the bug-pipeline like any other — the recovery
+path Josh established (review → expected-vs-actual bug ticket → the
+system fixes it) is exactly the right loop, and this is its
+largest exercise yet.
+
+### Status
+
+7 Bug tickets (WOR-143…149) in Backlog. Attribution: the review
+and the find are **Josh's**; Claude's role is recording + the
+integration-gap analysis. Not yet promoted/run — filed, awaiting
+the decision on sequencing them through the bug-pipeline.
