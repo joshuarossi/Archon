@@ -238,4 +238,68 @@ The expert's product is short, declarative, and reusable. The compose-tickets ag
 
 ---
 
+## Post-epic full-review + aggregate gate (auto-files bug tickets for every finding)
+
+**Status:** decided direction (Josh, 2026-05-17), to be designed/built
+later. This entry is the note, not the spec.
+
+### The problem class it solves — the cross-ticket-orphan seam
+
+`task-run-validation.sh` runs lint/typecheck **whole-repo** (it
+*sees* every error) but only **blocks** on failures attributable to
+files in *this ticket's* `git diff BASELINE...HEAD`
+(`run_quality_gate_task_scoped`, `relevant_to_changed_files`). The
+scoping is deliberate — it stops ticket N being blocked by ticket
+N-1's unrelated pre-existing debt.
+
+The hole: a defect can be the **emergent product of two
+individually-correct tickets**. Worked example (the WOR-151 lint
+errors): Ticket A adds `const userBId = …` and *uses* it → A's gate
+green, A correct. Ticket B later edits the same file and removes the
+last *usage* of `userBId` (B's focus is elsewhere; the declaration
+stays). B's whole-repo lint *sees* the now-dead `userBId`, but the
+dead **declaration line** isn't in B's diff scope (B changed the
+usage site, not the declaration) → non-blocking for B → B passes.
+Net: **A introduced zero errors, B introduced zero errors in its
+scope, yet the merged repo has an error no single ticket owns.** A
+per-ticket-scoped gate structurally cannot attribute (∴ cannot
+block) a defect that is nobody's individually. Same shape as the 7
+WOR-143…149 PRD-vs-code "seam" bugs — behaviors living *between*
+modules — just at the lint/type layer instead of the behavioral
+layer. Three confirmed instances of the class this run: aggregate
+build, the 7 integration bugs, the 4 WOR-151 lint errors.
+
+### The direction (Josh)
+
+A **post-epic gate** that fires when an Epic's last child reaches
+Done (or as a sweep): on the merged `main`, run a **full code
+review** (the same review skill that found the 7 PRD-vs-code bugs)
+**plus** a full **un-scoped** `install + lint + typecheck + build +
+test` — everything blocking, nothing attributed-away (at epic-end
+there is no "this ticket's scope" to exempt anything). For **every
+finding**, **automatically file a bug ticket** (reuse the proven
+autonomous followup-bug filer; the 7-bug loop ran 7/7 first-pass at
+~$7.62/bug). The per-ticket scoped-blocking gate stays as-is — this
+is *additive*: per-ticket = "did this ticket break what it touched"
+(fast, scoped, non-coupling); post-epic = "is the whole repo green +
+PRD-conformant" (comprehensive, blocking, auto-files bugs into the
+recovery loop that already works).
+
+### Open design questions (defer to build time)
+
+- Trigger: epic-last-child-Done event vs. scheduled sweep vs.
+  operator-invoked.
+- Auto-filed bugs: fire the bug-pipeline automatically, or land in
+  Backlog for operator review first (N findings → N concurrent runs
+  could be heavy; WIP cap interaction).
+- Dedupe / batching of findings so the same root cause across many
+  files becomes one ticket, not dozens.
+- Relationship to `ARCHIE_QUALITY_BENCHMARK.md` — the post-epic
+  gate is the *internal* aggregate truth check; the conformance
+  benchmark is the *external-standard* scored evaluation. Adjacent,
+  not the same; the gate's findings feed the recovery loop, the
+  benchmark scores the result.
+
+---
+
 _(append more v2 enhancements here as they're identified)_
