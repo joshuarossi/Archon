@@ -4667,3 +4667,95 @@ would close the autonomous loop. Not yet done; flagged as the
 next evaluation step. Build + fix loop *ran* flawlessly and
 cheaply; symptom-level confirmation is a verify-the-running-app
 question, not a verify-the-pipeline one.
+
+## Entry — 2026-05-17, 14:30 CDT — The CI-unblock staircase (WOR-151…159) and the disposition-of-evidence lesson
+
+Spent the session operating Clarity toward the *real* goal Josh
+named explicitly: not "CI goes green" but **"I can send the URL
+to someone, they log in, and use the app."** CI green is a
+checkpoint on that path, not the destination. Worth recording
+both the arc and two reasoning lessons it produced.
+
+### The staircase
+
+Clarity CI had been red so long that every stage after the first
+failing one had never executed. Fixing each one exposed the next —
+a literal onion:
+
+Prettier (`prettier --check` failing on ~180 files, gating all of
+CI via `needs: lint`) → WOR-153. Then vitest sweeping `e2e/**`
+Playwright specs into the unit run → same WOR-153 (vitest
+`exclude`). Then `convex deploy` hit Node-`crypto` in
+`convex/lib/compression.ts` → WOR-155. Then auth.config.ts had the
+wrong *shape* (provider objects where Convex wants
+`{domain,applicationID}`) → WOR-156. Then duplicate `users`
+indexes (`email` + `by_email`) → WOR-157. Then the seed step
+`Unauthorized` → WOR-158. Then Playwright finally *ran* for the
+first time ever: ~480 tests, ~all failing → WOR-159.
+
+Plus an operator-owned operational item interleaved
+(`GOOGLE_OAUTH_CLIENT_ID` on the preview deployment — Josh fixed
+it in the Convex dashboard; an agent cannot and must not).
+
+Each was filed as a Bug, parented to Epic WOR-90, with a
+verified root cause + advisory fix; Josh fired each; each merged
+first-pass. The pattern held: **read first, diagnose, file with
+evidence, never guess.**
+
+### Lesson 1 — verify the platform before calling idiomatic code a defect
+
+On WOR-158 I confidently diagnosed `seed = internalMutation` as
+the defect and was about to file a ticket telling an agent to
+convert it to a public mutation. Josh: *"are you SURE? find
+Convex's published example."* Convex's docs say the **opposite** —
+seed *should* be an internalMutation; the real fix was the CI
+invocation mechanism (`convex deploy --preview-run`, not
+standalone `convex run`). Had it shipped, an agent would have been
+directed to make correct code worse. The tell I should have
+caught myself: I was about to call existing, idiomatic-looking
+code a bug based on how I *believed* the platform worked.
+Idiomatic code that fails is more often usage/config than a
+defect in that code. (Captured: `feedback_verify_platform_docs…`.)
+
+### Lesson 2 — ask the *disposition* of evidence before acting (Josh-praised)
+
+When "480 e2e tests, all failing" landed, the naive dispositions
+were both wrong: "480 bugs to fix" and "find the systemic root
+cause and fix it." The right move was to ask **what is the right
+disposition of this evidence?** — and the answer came from
+*intent*, not the signal: the PRD deliberately deferred building
+out the e2e suite until a pre-beta gate. So ~480 uniform failures
+were neither bugs nor an infra mystery; they were the
+documented-planned state. Correct action: not "fix tests," not
+"debug infra," but *configuration* — stop a deliberately-deferred
+suite from gating CI (WOR-159, `continue-on-error`). Two
+generalizable halves: (a) uniform mass-failure is a
+*classification* signal (≈ one cause / one meaning, not N
+problems); (b) evidence does not dictate action — meaning depends
+on spec/intent, so classify before choosing
+investigate/fix/file/reconfigure/accept. Josh flagged this as the
+thing that went right and asked it be written down. (Captured:
+`feedback_ask_disposition_of_evidence`.)
+
+### Mode-1 spinoff (named, not silent)
+
+The Prettier recurrence was a Mode-3 → Mode-2 crossing: a one-off
+`prettier --write` repairs the past but not the cause; on an
+Archie-operated repo the durable fix is the pipeline formatting
+its own commits. Shipped as an Archon change
+(`task-format.ts` + two `task-implement.yaml` chokepoints,
+PR #52 on `joshuarossi/Archon`). Reinforced the standing rule:
+Archon PRs target `joshuarossi/Archon`, never `coleam00` upstream.
+
+### Honest state at entry time
+
+CI is **not** green yet — WOR-159 (e2e non-blocking) filed,
+Backlog, awaiting Josh's fire. When it lands, lint/typecheck/unit
+green + e2e non-fatal → CI green = the *checkpoint*. The actual
+goal (reachable URL, prod Convex config, prod Google OAuth,
+Resend domain per WOR-88, a human logging in) is an
+**operational** layer beyond CI — not bug-pipeline work. The
+recurring caveat from prior entries still binds: per-ticket-green
+≠ product-works; "CI green" will not by itself prove a person can
+log in and use Clarity. That remains a verify-the-running-app
+question.

@@ -306,6 +306,18 @@ to stderr. The validation script uses `exec 3>&1 1>&2` to enforce this.
 | `lib/jira-comment.ts` | canonical Jira comment formatter (`postWorkflowComment` + `formatElapsed`); see `ARCHIE_COMMENT_FORMAT.md` |
 | **`jira-task-done.ts`** | the task-done handler — deletes outward Blocks, project-sweeps + promotes unblocked tickets, rolls up the parent Epic if all children Done. JQL filter excludes `archon-blocked-pending` |
 
+> **`jira-tool.js createIssue` caveat.** It reliably applies only
+> `project`, `issuetype`, `summary`, `description`, `labels`. **`priority`
+> and `parent` are silently dropped** (issue gets project-default priority,
+> no Epic parent). If you need the Epic parent, set it in a follow-up via
+> the Atlassian MCP `editJiraIssue` (`fields.parent.key`). **Priority is
+> irrelevant to routing** — jira-router and the done-handler sweep select
+> on issue *type, status, and labels* only. Don't bother fixing up a
+> created ticket's priority; it has no operational effect. (If priority is
+> ever introduced into the sweep, that's a deliberate change we'd design,
+> and ticket-priority conventions would be addressed as part of that work
+> — not a latent surprise to guard against now.)
+
 ---
 
 ## Commands

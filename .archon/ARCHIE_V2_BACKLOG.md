@@ -302,4 +302,87 @@ recovery loop that already works).
 
 ---
 
+## Deterministic dependency install as a setup step (before the contract step)
+
+**Status:** decided direction (Josh, 2026-05-17), to be designed/built
+
+### The problem
+
+The pipeline has **no deterministic dependency-install step**.
+`task-run-validation.sh` runs lint/typecheck/vitest assuming
+`node_modules` already exists; there is no `npm ci`/`bun install`
+in the validation script, no install/setup node before the dev
+loop, and worktree/branch prep does not install deps. So each
+worktree relies on an *inherited* `node_modules` (from the source
+clone or a prior run), which is routinely stale or missing.
+
+Symptom seen repeatedly in operation: the dev agent's required
+"Pre-commit prediction" (`archon-dev-attempt.md` /
+`archon-fix-after-validate.md`) keeps reading some form of *"all
+blocking gates pass for this ticket; the vitest/lint/typecheck
+failures in feedback are from missing node_modules in the
+worktree, not from code changes."*
+
+Important framing correction (Josh, 2026-05-17): that prediction
+is **not** the system being talked past. It is the dev agent
+stating a *falsifiable claim to the reviewer*, who independently
+verifies it against validator ground truth — the adversarial
+single-responsibility design working as intended (see the journal
+entry on review quality / concrete reference standards). So this
+is **not a trust hole**. It is recurring *environmental friction*:
+gates run against a possibly-stale/missing `node_modules` every
+ticket, forcing the predict-and-verify dance every time, and
+risking the journal's documented "stale node_modules ⇒
+confidently-wrong negative result" failure class (see the
+2026-05-16 evaluator-error entry).
+
+### The direction (Josh)
+
+Add a **deterministic dependency install as part of setup,
+*before* the contract step** — so contract / test-gen /
+baseline-test / dev loop / all gates inherit a known-good
+`node_modules`, instead of each ticket rediscovering it's missing.
+
+Rationale (same root principle as the T0-scaffolding / Phase-0
+lesson and "fix the upstream emitter, not the downstream
+catcher"): a dependency-complete environment is *infrastructure,
+not ticket work* — it belongs before the agent shows up, at the
+earliest shared seam, removing the friction at its source rather
+than handling it repeatedly downstream.
+
+### Implementation steps (sketch)
+
+1. Add a setup node that installs deps, ordered **before the
+   contract step** (in `task-tests.yaml`, which owns the contract
+   step) — and/or a shared prepare step both `task-tests` and
+   `task-implement` chain through.
+2. Detect the package manager (`bun`/`npm`/`pnpm`) or standardize;
+   prefer the lockfile-faithful command (`npm ci` /
+   `bun install --frozen-lockfile`).
+3. **Fail-not-skip**: a failed/unresolvable install must hard-fail
+   the run (per the WOR-97 silent-SKIP lesson), never silently
+   proceed into gates that then fail confusingly.
+4. Optionally add a defense-in-depth dep-presence check in
+   `task-run-validation.sh` before the gates.
+5. Per the "sweep all consumers when changing a contract/
+   convention" rule: a setup-install node changes the environment
+   assumption for every downstream node — audit all consumers, do
+   not treat as self-contained.
+
+### Open design questions (defer to build time)
+
+- Placement: `task-tests` setup vs. `task-implement` setup vs. a
+  shared prepare step both chain through.
+- Package-manager detection vs. standardization.
+- Cost/time: install per ticket vs. cached/linked `node_modules`
+  across worktrees (faster, but reintroduces the stale-cache
+  failure this is meant to eliminate — likely prefer correctness
+  over speed, matching the journal's bias).
+- Interaction with the worktree-creation path in `@archon/git`
+  engine code (not traced yet — does the engine ever copy/link a
+  populated `node_modules`? confirm before assuming "never
+  installs").
+
+---
+
 _(append more v2 enhancements here as they're identified)_
