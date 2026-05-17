@@ -4759,3 +4759,95 @@ recurring caveat from prior entries still binds: per-ticket-green
 ≠ product-works; "CI green" will not by itself prove a person can
 log in and use Clarity. That remains a verify-the-running-app
 question.
+
+## Entry — 2026-05-17, 22:30 CDT — The auth-glue onion (WOR-160→163→164): low-pattern-density stacks + the e2e-deferral that masked it
+
+The prediction in the entry directly above ("CI green won't prove
+a person can log in") came true, expensively, and produced a
+sharper lesson than the prediction itself. Recorded as the worked
+example for `feedback_low_pattern_density_stack`.
+
+### What happened
+
+Operating Clarity toward "send someone the URL, they log in and
+use it." After the CI staircase (WOR-151..159) and styling
+(WOR-160..162), Josh actually signed in and hit the app. A chain
+of runtime-only auth-glue bugs surfaced one at a time, each
+exposed only by exercising the *next* step the prior fix unlocked:
+
+- WOR-160: no `convex/http.ts` → "HTTP actions not enabled" →
+  auth never connects. (WOR-109 authored auth.ts/auth.config.ts
+  but omitted the http-route registration half.)
+- WOR-163: `requireAuth` looked up the user by `identity.email`
+  (always undefined for @convex-dev/auth) → "No user record found
+  for email undefined". User row provably existed (Convex
+  dashboard) — the lookup key was wrong.
+- WOR-164: WOR-163's fix used raw `identity.subject` instead of
+  the exported `getAuthUserId()`, which splits the composite
+  subject on `TOKEN_SUB_CLAIM_DIVIDER`. → `db.get` got the whole
+  composite, "Invalid ID length 65". WOR-163's ticket *recommended*
+  `getAuthUserId`; the dev agent reinterpreted it to a hand-rolled
+  `identity.subject as Id<"users">` and dropped the split.
+
+Three follow-ups inside one subsystem (auth), each real, each only
+findable by running the authenticated flow against the real
+Convex Auth runtime.
+
+### The two load-bearing insights (Josh)
+
+**1. Pattern density.** Every bug in this cluster (and the
+Tailwind-v4 styling ones) sat in the lowest-training-density part
+of the stack — Convex / `@convex-dev/auth` / Tailwind v4 glue,
+not React or plain TS. The agents did fine on the dense-prior work
+(the 35-ticket build, domain logic, the 17 files using `.cc-*`
+correctly). They stumbled exactly where correct idiomatic usage is
+*not* in the bulk of training data, so they pattern-matched the
+adjacent familiar thing (Supabase/Auth.js: look up by email; treat
+subject as id) — plausibly, wrongly. Implication: **spec
+prescriptiveness must scale inversely with stack pattern density**;
+for an obscure stack the PRD/TechSpec must over-specify the
+non-obvious mechanics, and *auth specifically* is the
+highest-value thing to over-specify. This is the actionable change
+for a run #3.
+
+**2. Static review structurally cannot catch this class; only e2e
+can — and e2e was deferred.** Josh ran a near-maximal review
+(Opus 4.7 Max reasoning, 4 sub-agents, ~1h, explicitly diffing
+PRD/ACs vs. code) — it produced the original 7 bug tickets and
+**zero** of the WOR-160/163/164 class. Those bugs don't
+contradict any AC and typecheck fine; the wrongness is in runtime
+interaction with an under-encountered library, invisible to
+reading. The *only* detector is exercising the running app — i.e.
+e2e — which Clarity stubbed and deferred building out to the end
+(PRD-sanctioned). So the deferral didn't postpone polish; it
+removed the one mechanism capable of finding the entire auth-glue
+failure class, and it all surfaced at once in production as a
+fix→redeploy→discover-next-layer onion. The journal's
+halt-loud-at-the-gate discipline had no gate because the gate was
+off.
+
+### The corrected forward action (Josh)
+
+Not "write more prescriptive bug tickets" (reactive; that's just
+me re-injecting post-hoc the specificity that should have been
+upstream). The fix is upstream and two-part for run #3: (a)
+improve the spec, **specifically how auth is specified**, scaled
+to the stack's obscurity; (b) **do not defer building out e2e to
+the end on a low-density stack** — stubs as scaffolding are fine,
+but build them incrementally alongside the features so this class
+surfaces one bug at a time during the build, not all at once in
+prod. Attribution: the pattern-density and e2e-masking framings
+are Josh's; the per-incident root-causes (verified from
+@convex-dev/auth source each time) and the synthesis here are
+Claude's.
+
+### Status at entry time
+
+WOR-160/161/162 merged + verified live (styled landing page,
+auth connects, sign-in creates the user row). WOR-163 merged
+(deployed — error changed, confirming it shipped). WOR-164
+(the `getAuthUserId` split fix — last known blocker to a usable
+logged-in app) **running** in bug-pipeline, not yet merged.
+Caveat unchanged and now twice-proven: merged ≠ working until
+redeploy + the running flow is actually exercised; and there may
+be a next onion layer past WOR-164.

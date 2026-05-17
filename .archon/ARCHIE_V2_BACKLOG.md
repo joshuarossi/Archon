@@ -385,4 +385,78 @@ than handling it repeatedly downstream.
 
 ---
 
+## Spec-prescriptiveness scaled to stack pattern-density (esp. auth) + don't defer e2e build-out on obscure stacks
+
+**Status:** decided direction (Josh, 2026-05-17), to be designed/built
+
+### The problem (worked example: Clarity WOR-160→163→164)
+
+Every runtime-glue bug in the Clarity auth onion (missing
+`convex/http.ts`; `requireAuth` by `identity.email`; raw
+`identity.subject` instead of `getAuthUserId`'s split) sat in the
+**lowest-training-pattern-density** part of the stack — Convex /
+`@convex-dev/auth` / Tailwind v4 — not React or plain TS. Agents
+have dense correct priors for common stacks and pattern-match the
+adjacent-familiar-thing for obscure ones (Supabase/Auth.js
+muscle memory), producing plausibly-but-wrongly. A thin spec on
+an obscure stack compounds that through
+spec → epic-decompose → contract → dev-attempt.
+
+Two compounding facts make this systemic, not tactical:
+
+1. **Static review cannot catch this class.** A maximal review
+   (Opus 4.7 Max, 4 sub-agents, ~1h, PRD/AC-vs-code diff)
+   produced the original 7 bug tickets and **zero** of the
+   auth-glue class — those bugs typecheck and contradict no AC;
+   the wrongness is runtime interaction with an under-encountered
+   library, invisible to reading.
+2. **Only e2e catches it, and e2e was deferred.** Clarity stubbed
+   e2e and deferred building it out to the end (PRD-sanctioned),
+   removing the one detector for the whole class; it surfaced all
+   at once in prod as a fix→redeploy→discover-next-layer onion.
+
+### The direction (Josh)
+
+Fix it **upstream**, two parts:
+
+1. **Spec prescriptiveness scaled inversely with stack
+   pattern-density.** The decomposer / spec-intake should
+   recognize a low-pattern-density stack and *require* the
+   PRD/TechSpec/StyleGuide to over-specify its non-obvious
+   mechanics — analogous to the existing `scaffolding_completeness`
+   gate in the mark4 evaluator. **Auth is the single
+   highest-value thing to over-specify** (the Clarity onion was
+   almost entirely auth glue). Underspecified obscure-stack auth ⇒
+   `required_repair` on the plan/spec.
+2. **Do not defer building out e2e to the end on a low-density
+   stack.** Stubs as scaffolding are fine; the build-out sequencing
+   must be incremental-alongside-features so the runtime-glue class
+   surfaces one bug at a time during the build (where the
+   halt-loud-at-the-gate discipline works) instead of all at once
+   in production.
+
+### Implementation sketch / open questions (defer to build time)
+
+- How does the decomposer *detect* "low pattern density"? Curated
+  list of stacks/libraries (Convex, @convex-dev/auth, Tailwind v4,
+  …) vs. a heuristic vs. operator-declared in the Epic. Start with
+  a curated list; it's the cheapest and most reliable.
+- What does "over-specify auth" concretely require in the spec —
+  a checklist the spec-intake gate enforces (auth route
+  registration, identity→user resolution, session model, seeding/
+  deploy mechanics)?
+- e2e sequencing: a decomposition rule that, for a flagged stack,
+  forbids deferring e2e build-out past the features it covers
+  (vs. allowing stubs only as Phase-0 scaffolding) — relate to the
+  existing T0-scaffolding / verify-test-runner-works lessons.
+- Relationship to the post-epic full-review gate: that gate is
+  static/aggregate; this lesson says static review *cannot* see
+  the auth-glue class, so the e2e-incremental requirement is the
+  real complement, not more static review.
+
+Memory: `feedback_low_pattern_density_stack`. Journal: entry
+2026-05-17 22:30 CDT.
+
+---
+
 _(append more v2 enhancements here as they're identified)_
