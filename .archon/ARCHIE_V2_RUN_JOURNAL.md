@@ -4505,3 +4505,69 @@ largest exercise yet.
 and the find are **Josh's**; Claude's role is recording + the
 integration-gap analysis. Not yet promoted/run — filed, awaiting
 the decision on sequencing them through the bug-pipeline.
+
+---
+
+## Entry — 2026-05-17, 04:15 CDT — Bug-fix loop: first 2 review-found bugs closed, measured (WOR-143, WOR-144)
+
+The recovery loop Josh designed (review → expected-vs-actual bug
+ticket → the system fixes it, operator never touching project
+code) ran on the first two of the 7 review-found bugs. Both
+closed **first-pass, zero rerolls**. Exact figures from telemetry
+(verified fresh; Josh observed the closes on the dashboard before
+Claude did — the live-view-ahead pattern again, working as it
+should).
+
+| Bug | What it was | Time | Cost | Runs | Resolved (UTC) |
+|---|---|---|---|---|---|
+| WOR-143 | Admin "+ New Template" white-screens — *missing create UI* | 31.2 min | **$9.32** (bug-pipeline $1.67 + task-implement $7.65) | bug-pipeline ✓ → task-implement ✓, single pass | 2026-05-17 03:39:28 |
+| WOR-144 | Joint session has no Coach opening message — *behavioral integration gap* | 21.3 min | **$7.85** (bug-pipeline $2.01 + task-implement $5.84) | bug-pipeline ✓ → task-implement ✓, single pass | 2026-05-17 04:00:53 |
+
+**Combined: 2 bugs, ~52.5 min machine time, $17.17, zero
+rerolls.** Machine time == wall-clock for each (serialized, no
+idle).
+
+### Why this is a milestone-grade data point
+
+1. **The bug-fix half of the value proposition is now measured,
+   not asserted.** The Clarity build proved "autonomously builds a
+   real app." This proves "and autonomously fixes its own
+   review-found integration bugs" — ~$8–9 / ~20–30 min per bug,
+   first-pass, no operator code-authorship.
+2. **WOR-143 was the hard shape and still converged clean.** It
+   was a *missing-feature* bug (the template-create UI did not
+   exist) — Claude flagged at promote time that this is harder for
+   a bug-pipeline than a typo-fix. It still completed first-pass
+   in 31 min / $9.32 with no intervention. WOR-144 (a missing
+   behavioral seam — the Coach opening message) was even cheaper.
+3. **Converged THROUGH known infra noise.** WOR-143's
+   task-implement emitted ~30 repeating `hook_2` ZodError log
+   lines (the agent-SDK hook-fault family, same class as the
+   earlier "SDK returned success" anomalies). Verified non-blocking
+   at the time (DAG nodes kept completing in sequence:
+   attempt-1 → review → parse → attempt-2 → test-2 …); the clean
+   single-pass close confirms it. The hook spam is a real but
+   *cosmetic* platform-layer annoyance — tracked as a Mode-1
+   cleanup item (it recurs across runs and pollutes
+   logs/diagnostics), NOT a loop weakness.
+
+### Process note (own-error, per conventions)
+
+When Josh first asked "what happened with WOR-143?", Claude
+initially reported it as "progressing healthily" while focused on
+reconciling a status-display question, and nearly under-weighted
+the repeating hook ZodError until digging in. Then Claude was
+careful to separate two claims that must stay separate:
+"the loop is architecturally sound" (true generally) vs. "THIS
+run is healthy" (had to be verified by node-progression, not
+assumed). Both checked out — but the discipline of not letting
+reassurance outrun the per-run evidence is the thing that caught
+the hook noise as non-blocking *with proof* rather than hope.
+
+### Status
+
+WOR-143, WOR-144: Done. WOR-145 ("@-mention Coach unreachable")
+auto-advanced to In Progress (WOR-144's Done swept the next bug).
+5 bugs remain (WOR-145 in flight, WOR-146–149 Backlog). Reporting
+each as it closes; will tally the full 7-bug fix economics when
+the set completes.
