@@ -4851,3 +4851,60 @@ logged-in app) **running** in bug-pipeline, not yet merged.
 Caveat unchanged and now twice-proven: merged ≠ working until
 redeploy + the running flow is actually exercised; and there may
 be a next onion layer past WOR-164.
+
+## Entry — 2026-05-17, 23:10 CDT — End-to-end reached; the root cause was a self-referentially incoherent spec instruction
+
+The Clarity core loop now works in production: sign in →
+dashboard → create case → chat all function end-to-end (after
+WOR-160→164 deployed and the prod Convex deployment was manually
+seeded — prod `templates` was empty because `deploy.yml` runs no
+seed and `seed` is an internalMutation that only ran against the
+CI *preview* deployment; Josh ran `seed:seed` via the prod
+dashboard). On a low-pattern-density stack, getting a faithful
+machine to a functionally-complete app is a real result.
+
+**And it is nowhere near private-beta quality.** Bare UX, status
+text leaking into the case-title slot, no hierarchy, plus near-
+certainly more functional bugs one click deeper. "It functions"
+and "it's not good" are both true; the second doesn't have to be
+softened because the first is finally true.
+
+### Root cause: a spec instruction that was incoherent on its face
+
+Josh's attribution — and it is correct, not deflection: the
+single most damaging decision was in the **spec**, not the
+pipeline. The spec said, in effect, *"we won't add any e2e tests
+until we're ready to let people into the app."* That is
+self-referentially incoherent: e2e tests *are* the mechanism that
+determines readiness, so deferring them until ready leaves no
+instrument to know when ready — "ready" is defined in terms of the
+absent gate. A faithful executor executes an incoherent
+instruction faithfully and produces exactly what we got: a working
+app discovered to be broken only by a human manually clicking
+through prod and hitting WOR-160→161→162→163→164→seed serially.
+Those ~14 tickets are largely the *cost of that one spec
+decision*, paid all at once at the end instead of incrementally
+during the build.
+
+Generalizable rule (now in `feedback_low_pattern_density_stack` as
+the sharpened principle): **a spec must not defer the mechanism by
+which the spec's own completion/readiness is judged.** The pipeline
+did what it was told; what it was told was incoherent; the fix is
+upstream in spec authoring, not "make Archie smarter." This
+upgrades the earlier don't-defer-e2e heuristic to a hard
+constraint.
+
+### Strategic next-phase decision (Josh, recorded; not yet started)
+
+Stop the manual click-find-file loop. Next phase: **build the
+actual e2e tests, let them run to surface bugs systematically, and
+automate bug-ticket creation from e2e failures** (the WOR-102→
+WOR-139 autonomous-followup shape + the post-epic aggregate-gate
+backlog candidate, applied to e2e). Josh framed this is "in a
+little bit" — it is real Mode 2 design work spanning task-tests /
+decompose / the auto-file pattern, deliberately not kicked off
+reflexively. Backlog candidate intentionally NOT expanded yet
+(Josh's call) — captured here as the agreed direction so the next
+session has the starting point. Attribution: the spec-incoherence
+root cause and the next-phase direction are Josh's; the per-bug
+diagnoses and synthesis are Claude's.
